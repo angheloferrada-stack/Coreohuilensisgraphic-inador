@@ -3,20 +3,30 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="theme-color" content="#0f0d14">
+  <meta name="theme-color" content="#F7F7F7">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="Escenario">
-  <title>Escenario · Formaciones</title>
+  <title>Escenario · Huilén</title>
   <link rel="manifest" href="manifest.json">
-  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="icon" href="logo.png" type="image/png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <header class="top">
-    <select id="choreoSelect" aria-label="Coreografía"></select>
-    <button id="btnNewChoreo" title="Nueva coreografía">+</button>
-    <button id="btnRenameChoreo" title="Renombrar">✎</button>
-    <button id="btnDeleteChoreo" title="Eliminar coreografía">🗑</button>
+    <img src="logo.png" alt="Huilén" class="logo">
+    <div class="brand">
+      <strong>Escenario</strong>
+      <span>Formaciones</span>
+    </div>
+    <div class="top-actions">
+      <select id="choreoSelect" aria-label="Coreografía"></select>
+      <button id="btnNewChoreo" class="pill" title="Nueva coreografía">+</button>
+      <button id="btnRenameChoreo" class="pill" title="Renombrar">✎</button>
+      <button id="btnDeleteChoreo" class="pill" title="Eliminar coreografía">🗑</button>
+    </div>
   </header>
 
   <main>
@@ -29,11 +39,12 @@
         <button id="btnPrev" title="Formación anterior">⏮</button>
         <button id="btnPlay" class="primary" title="Reproducir">▶</button>
         <button id="btnNext" title="Formación siguiente">⏭</button>
-        <input id="scrub" type="range" min="0" max="1000" value="0" aria-label="Línea de tiempo">
+        <span id="status" class="status"></span>
       </div>
-      <div class="row"><span id="status" class="status"></span></div>
-      <div id="frames" class="chips"></div>
 
+      <div id="timeline" class="timeline" aria-label="Línea de tiempo"></div>
+
+      <p class="eyebrow">Formaciones</p>
       <div class="row">
         <button id="btnAddFrame">+ Formación</button>
         <button id="btnDupFrame">Duplicar</button>
@@ -42,24 +53,33 @@
       </div>
 
       <div class="row">
-        <label>Transición (tiempos) <input id="transBeats" type="number" min="1" max="64" value="8"></label>
+        <label>Tiempos al siguiente <input id="transBeats" type="number" min="1" max="64" value="8"></label>
         <label>BPM <input id="bpm" type="number" min="30" max="300" value="120"></label>
         <label><input id="curved" type="checkbox"> Curvas</label>
         <label><input id="snap" type="checkbox" checked> Grilla</label>
       </div>
 
+      <p class="eyebrow">Rutas</p>
+      <div class="row">
+        <button id="btnToolRoute" title="Toca el escenario para añadir puntos de ruta a los seleccionados">Ruta</button>
+        <button id="btnToolTurn" title="Toca el centro de giro para hacer dar vueltas a los seleccionados">Vuelta</button>
+        <button id="btnUndoWp">Deshacer punto</button>
+        <button id="btnClearRoutes">Borrar rutas</button>
+      </div>
+
+      <p class="eyebrow">Bailarines</p>
       <div class="row">
         <button id="btnAddDancer">+ Bailarín</button>
         <button id="btnRemoveDancer">− Seleccionados</button>
         <button id="btnCrews">Crews</button>
       </div>
 
+      <p class="eyebrow">Música y exportar</p>
       <div class="row">
         <button id="btnMusic">🎵 Música</button>
         <span id="audioName" class="muted"></span>
         <input id="audioFile" type="file" accept="audio/*" hidden>
       </div>
-
       <div class="row">
         <button id="btnExportPng">PNG</button>
         <button id="btnExportVideo">Video</button>
