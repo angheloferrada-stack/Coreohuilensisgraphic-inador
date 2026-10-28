@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0f0d14">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Escenario">
+  <title>Escenario · Formaciones</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="top">
+    <select id="choreoSelect" aria-label="Coreografía"></select>
+    <button id="btnNewChoreo" title="Nueva coreografía">+</button>
+    <button id="btnRenameChoreo" title="Renombrar">✎</button>
+    <button id="btnDeleteChoreo" title="Eliminar coreografía">🗑</button>
+  </header>
+
+  <main>
+    <div class="stage-wrap">
+      <canvas id="stage"></canvas>
+    </div>
+
+    <section class="bar">
+      <div class="transport">
+        <button id="btnPrev" title="Formación anterior">⏮</button>
+        <button id="btnPlay" class="primary" title="Reproducir">▶</button>
+        <button id="btnNext" title="Formación siguiente">⏭</button>
+        <input id="scrub" type="range" min="0" max="1000" value="0" aria-label="Línea de tiempo">
+      </div>
+      <div class="row"><span id="status" class="status"></span></div>
+      <div id="frames" class="chips"></div>
+
+      <div class="row">
+        <button id="btnAddFrame">+ Formación</button>
+        <button id="btnDupFrame">Duplicar</button>
+        <button id="btnDelFrame">Borrar</button>
+        <button id="btnNotes">Nombre y notas</button>
+      </div>
+
+      <div class="row">
+        <label>Transición (tiempos) <input id="transBeats" type="number" min="1" max="64" value="8"></label>
+        <label>BPM <input id="bpm" type="number" min="30" max="300" value="120"></label>
+        <label><input id="curved" type="checkbox"> Curvas</label>
+        <label><input id="snap" type="checkbox" checked> Grilla</label>
+      </div>
+
+      <div class="row">
+        <button id="btnAddDancer">+ Bailarín</button>
+        <button id="btnRemoveDancer">− Seleccionados</button>
+        <button id="btnCrews">Crews</button>
+      </div>
+
+      <div class="row">
+        <button id="btnMusic">🎵 Música</button>
+        <span id="audioName" class="muted"></span>
+        <input id="audioFile" type="file" accept="audio/*" hidden>
+      </div>
+
+      <div class="row">
+        <button id="btnExportPng">PNG</button>
+        <button id="btnExportVideo">Video</button>
+        <button id="btnExportJson">JSON</button>
+        <button id="btnImport">Importar</button>
+        <button id="btnShare">Compartir</button>
+      </div>
+      <input id="importFile" type="file" accept="application/json,.json" hidden>
+    </section>
+  </main>
+
+  <dialog id="dlgNotes">
+    <h3>Formación</h3>
+    <input id="frameName" type="text" maxlength="30" placeholder="Nombre de la formación">
+    <textarea id="notesText" rows="6" placeholder="Notas para los bailarines…"></textarea>
+    <div class="row"><button data-close>Listo</button></div>
+  </dialog>
+
+  <dialog id="dlgCrews">
+    <h3>Crews</h3>
+    <div id="crewList"></div>
+    <div class="row">
+      <button id="btnCrewFromSel">Crear con seleccionados</button>
+      <button id="btnCrewClear">Quitar de crew</button>
+      <button data-close>Cerrar</button>
+    </div>
+  </dialog>
+
+  <div id="toast" class="toast" role="status"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

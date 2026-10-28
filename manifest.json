@@ -1,0 +1,14 @@
+{
+  "name": "Escenario · Formaciones",
+  "short_name": "Escenario",
+  "description": "Planifica formaciones de baile, transiciones y música.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0f0d14",
+  "theme_color": "#0f0d14",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
