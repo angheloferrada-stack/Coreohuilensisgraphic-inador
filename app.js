@@ -179,10 +179,13 @@
     const s = segs.find((x) => b >= x.start && b < x.start + x.dur) || segs[segs.length - 1];
     const p = ease(clamp01((b - s.start) / s.dur));
     const A = c.frames[s.from].pos, B = c.frames[s.to].pos;
-    const routes = c.frames[s.from].routes || {};
+    const f = c.frames[s.from];
+    const routes = f.routes || {};
     const out = {};
     for (const d of c.dancers) {
       const a = A[d.id] || B[d.id] || CENTER, bb = B[d.id] || A[d.id] || CENTER;
+      const spun = spinPoint(f, A, B, d.id, p);
+      if (spun) { out[d.id] = spun; continue; }
       const route = routes[d.id];
       out[d.id] = route && route.length
         ? routeAt(a, bb, route, p)
@@ -195,6 +198,25 @@
     const n = ps.length || 1;
     return { x: ps.reduce((s, p) => s + p.x, 0) / n, y: ps.reduce((s, p) => s + p.y, 0) / n };
   };
+
+  // Giro del grupo: el centro se traslada de A a B y cada bailarín gira a su alrededor
+  // (en píxeles para que el giro no se deforme con la forma del escenario)
+  function spinPoint(f, A, B, id, p) {
+    const sp = f.spins && f.spins[id];
+    if (!sp || !A[id] || !B[id]) return null;
+    const ids = sp.ids.filter((i) => A[i] && B[i]);
+    if (ids.length < 2) return null;
+    const mA = centroid(ids, A), mB = centroid(ids, B);
+    const sw = view.sw, sh = view.sh;
+    const relX = (A[id].x - mA.x) * sw, relY = (A[id].y - mA.y) * sh;
+    const th = (sp.deg * Math.PI / 180) * p;
+    const ca = Math.cos(th), sa = Math.sin(th);
+    const rX = relX * ca - relY * sa, rY = relX * sa + relY * ca;
+    const tX = (B[id].x - mB.x) * sw, tY = (B[id].y - mB.y) * sh;
+    const x = mA.x + (mB.x - mA.x) * p + (rX + (tX - rX) * p) / sw;
+    const y = mA.y + (mB.y - mA.y) * p + (rY + (tY - rY) * p) / sh;
+    return { x: clamp01(x), y: clamp01(y) };
+  }
 
   // ---------- Geometría y dibujo ----------
   const toPx = (x, y) => ({ x: view.sx + x * view.sw, y: view.sy + y * view.sh });
@@ -289,7 +311,19 @@
         const col = dancerColor(d);
         ctx.globalAlpha = 0.7;
         ctx.strokeStyle = col;
-        if (route && route.length) {
+        const spin = f.spins && f.spins[d.id];
+        if (spin) {
+          ctx.setLineDash([]);
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          for (let s = 0; s <= 30; s++) {
+            const q0 = spinPoint(f, pos, next, d.id, ease(s / 30));
+            if (!q0) break;
+            const q = toPx(q0.x, q0.y);
+            if (s === 0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y);
+          }
+          ctx.stroke();
+        } else if (route && route.length) {
           ctx.setLineDash([]);
           ctx.lineWidth = 2;
           ctx.beginPath();
@@ -428,36 +462,15 @@
     updateStatus();
   }
 
-  function turnAt(center) {
+  function spinSelection() {
     if (!guardRoutes()) return;
-    if (!selection.size) return toast('Selecciona bailarines primero');
-    tool = 'mover';
-    updateTransport();
-    const deg = parseFloat(prompt('Grados de la vuelta (360 = vuelta completa)', '360'));
-    if (!deg) return;
-    const steps = Math.max(2, Math.min(32, parseInt(prompt('Pasos (puntos intermedios)', '8'), 10) || 8));
-    rotateSelection(center, deg, steps);
-  }
-
-  function rotateSelection(center, deg, steps) {
     const c = chor(), f = c.frames[frameIdx];
-    f.routes = f.routes || {};
-    const cx = center.x * view.sw, cy = center.y * view.sh;
-    const rad = deg * Math.PI / 180;
-    for (const id of selection) {
-      const p = f.pos[id];
-      if (!p) continue;
-      const px = p.x * view.sw - cx, py = p.y * view.sh - cy;
-      const pts = [];
-      for (let k = 1; k <= steps; k++) {
-        const a = rad * k / steps, ca = Math.cos(a), sa = Math.sin(a);
-        const X = px * ca - py * sa + cx, Y = px * sa + py * ca + cy;
-        let x = clamp01(X / view.sw), y = clamp01(Y / view.sh);
-        if (c.snap) { x = snapV(x); y = snapV(y); }
-        pts.push({ x, y });
-      }
-      f.routes[id] = pts;
-    }
+    const ids = [...selection].filter((id) => f.pos[id]);
+    if (ids.length < 2) return toast('Selecciona al menos 2 bailarines para hacer vueltas');
+    const deg = parseFloat(prompt('Grados de giro mientras se mueven (360 = una vuelta, 720 = dos)', '360'));
+    if (!deg) return;
+    f.spins = f.spins || {};
+    for (const id of ids) f.spins[id] = { deg, ids };
     touch();
     render();
     updateStatus();
@@ -485,8 +498,13 @@
     let n = 0;
     for (const id of selection) {
       if (f.routes && f.routes[id]) { delete f.routes[id]; n++; }
+      const sp = f.spins && f.spins[id];
+      if (sp) {
+        for (const other of sp.ids) delete f.spins[other];
+        n++;
+      }
     }
-    if (!n) return toast('Esos bailarines no tienen ruta');
+    if (!n) return toast('Esos bailarines no tienen ruta ni vuelta');
     touch();
     render();
     updateStatus();
@@ -497,7 +515,6 @@
       if (mode !== 'edit') return;
       const pt = localPt(e);
       if (tool === 'ruta') { addWaypointAt(toNorm(pt.x, pt.y)); return; }
-      if (tool === 'vuelta') { turnAt(toNorm(pt.x, pt.y)); return; }
       canvas.setPointerCapture(e.pointerId);
       const pos = chor().frames[frameIdx].pos;
       const hit = hitDancer(pt, pos);
@@ -813,6 +830,7 @@
     c.frames.forEach((f) => selection.forEach((id) => {
       delete f.pos[id];
       if (f.routes) delete f.routes[id];
+      if (f.spins) delete f.spins[id];
     }));
     selection = new Set();
     touch();
@@ -917,8 +935,6 @@
       text = `${fmt(beatToSec(playBeat, c.bpm))} / ${fmt(beatToSec(totalOf(c), c.bpm))}`;
     } else if (tool === 'ruta') {
       text = `Ruta: toca el escenario para añadir un punto a ${selection.size} bailarín(es)`;
-    } else if (tool === 'vuelta') {
-      text = 'Vuelta: toca el centro de giro';
     } else {
       text = `Formación ${frameIdx + 1}/${c.frames.length}: ${c.frames[frameIdx].name}`;
     }
@@ -944,7 +960,6 @@
       $(id).disabled = !inEdit;
     }
     $('btnToolRoute').classList.toggle('on', tool === 'ruta');
-    $('btnToolTurn').classList.toggle('on', tool === 'vuelta');
     renderTimeline();
     updateStatus();
   }
@@ -1153,7 +1168,7 @@
     $('snap').onchange = (e) => { chor().snap = e.target.checked; touch(); render(); };
 
     $('btnToolRoute').onclick = () => setToolToggle('ruta');
-    $('btnToolTurn').onclick = () => setToolToggle('vuelta');
+    $('btnToolTurn').onclick = spinSelection;
     $('btnUndoWp').onclick = undoWaypoint;
     $('btnClearRoutes').onclick = clearRoutes;
 
