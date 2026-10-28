@@ -16,16 +16,13 @@
 </head>
 <body>
   <header class="top">
-    <img src="logo.png" alt="Huilén" class="logo">
-    <div class="brand">
-      <strong>Escenario</strong>
-      <span>Formaciones</span>
+    <div class="brand-row">
+      <img src="logo.png" alt="Huilén" class="logo">
+      <div class="brand"><strong>Escenario</strong><span>Formaciones</span></div>
     </div>
     <div class="top-actions">
       <select id="choreoSelect" aria-label="Coreografía"></select>
-      <button id="btnNewChoreo" class="pill" title="Nueva coreografía">+</button>
-      <button id="btnRenameChoreo" class="pill" title="Renombrar">✎</button>
-      <button id="btnDeleteChoreo" class="pill" title="Eliminar coreografía">🗑</button>
+      <button id="btnNewChoreo" class="pill" title="Crear una coreografía nueva">+ Nueva</button>
     </div>
   </header>
 
@@ -34,77 +31,166 @@
       <canvas id="stage"></canvas>
     </div>
 
-    <section class="bar">
-      <div class="transport">
-        <button id="btnPrev" title="Formación anterior">⏮</button>
-        <button id="btnPlay" class="primary" title="Reproducir">▶</button>
-        <button id="btnNext" title="Formación siguiente">⏭</button>
-        <span id="status" class="status"></span>
-      </div>
+    <div class="playbar">
+      <button id="btnPrev" class="round" aria-label="Formación anterior">⏮</button>
+      <button id="btnPlay" class="round play" aria-label="Reproducir">▶</button>
+      <button id="btnNext" class="round" aria-label="Formación siguiente">⏭</button>
+      <span id="status" class="status"></span>
+    </div>
 
-      <div id="timeline" class="timeline" aria-label="Línea de tiempo"></div>
+    <div id="timeline" class="timeline" aria-label="Línea de tiempo"></div>
+    <div class="legend">
+      <span><i class="sw hold"></i>Quieta: se quedan quietos</span>
+      <span><i class="sw move"></i>Mover: caminan a la siguiente</span>
+    </div>
 
-      <p class="eyebrow">Formaciones</p>
-      <div class="row">
-        <button id="btnAddFrame">+ Formación</button>
-        <button id="btnDupFrame">Duplicar</button>
-        <button id="btnDelFrame">Borrar</button>
-        <button id="btnNotes">Nombre y notas</button>
-      </div>
+    <div class="panel">
+      <!-- Pestaña 1: la formación actual -->
+      <section class="tab-panel" data-tab="formacion">
+        <div class="card">
+          <h4>Esta formación</h4>
+          <p class="help">Cada formación tiene dos partes. Toca − o + para cambiar los tiempos.</p>
+          <div class="stepper">
+            <div class="step-text"><b>Quieta</b><small>tiempos en que se quedan</small></div>
+            <div class="step-ctl">
+              <button id="holdMinus" class="round sm" aria-label="Menos quieta">−</button>
+              <span id="holdVal" class="step-val">0</span>
+              <button id="holdPlus" class="round sm" aria-label="Más quieta">+</button>
+            </div>
+          </div>
+          <div class="stepper">
+            <div class="step-text"><b>Mover</b><small>tiempos para llegar a la siguiente</small></div>
+            <div class="step-ctl">
+              <button id="beatMinus" class="round sm" aria-label="Menos mover">−</button>
+              <span id="beatVal" class="step-val">8</span>
+              <button id="beatPlus" class="round sm" aria-label="Más mover">+</button>
+            </div>
+          </div>
+        </div>
 
-      <div class="row">
-        <label>Tiempos al siguiente <input id="transBeats" type="number" min="1" max="64" value="8"></label>
-        <label>BPM <input id="bpm" type="number" min="30" max="300" value="120"></label>
-        <label><input id="curved" type="checkbox"> Curvas</label>
-        <label><input id="snap" type="checkbox" checked> Grilla</label>
-      </div>
+        <div class="card">
+          <h4>Formaciones</h4>
+          <p class="help">Una nueva formación aparece después de la que estás viendo.</p>
+          <div class="grid2">
+            <button id="btnAddFrame" class="btn">+ Nueva formación</button>
+            <button id="btnDupFrame" class="btn">Duplicar</button>
+            <button id="btnNotes" class="btn">Nombre y notas</button>
+            <button id="btnDelFrame" class="btn danger">Borrar</button>
+          </div>
+        </div>
+      </section>
 
-      <p class="eyebrow">Rutas</p>
-      <div class="row">
-        <button id="btnToolRoute" title="Toca el escenario para añadir puntos de ruta a los seleccionados">Ruta</button>
-        <button id="btnToolTurn" title="El grupo seleccionado gira mientras se mueve a la siguiente formación">Vuelta</button>
-        <button id="btnUndoWp">Deshacer punto</button>
-        <button id="btnClearRoutes">Borrar rutas</button>
-      </div>
+      <!-- Pestaña 2: bailarines -->
+      <section class="tab-panel" data-tab="bailarines" hidden>
+        <div class="card">
+          <h4>Bailarines</h4>
+          <p class="help">Toca un bailarín para seleccionarlo. Arrastra sobre el escenario para elegir varios. Doble toque para cambiarle el nombre.</p>
+          <div class="grid2">
+            <button id="btnAddDancer" class="btn">+ Agregar</button>
+            <button id="btnRemoveDancer" class="btn danger">Quitar seleccionados</button>
+          </div>
+        </div>
+        <div class="card">
+          <h4>Crews</h4>
+          <p class="help">Un crew es un grupo de bailarines con su propio color.</p>
+          <button id="btnCrews" class="btn wide">Ver crews</button>
+        </div>
+      </section>
 
-      <p class="eyebrow">Bailarines</p>
-      <div class="row">
-        <button id="btnAddDancer">+ Bailarín</button>
-        <button id="btnRemoveDancer">− Seleccionados</button>
-        <button id="btnCrews">Crews</button>
-      </div>
+      <!-- Pestaña 3: movimientos -->
+      <section class="tab-panel" data-tab="movimiento" hidden>
+        <div class="card">
+          <h4>Movimientos</h4>
+          <p class="help">Primero selecciona bailarines en el escenario. Después elige un movimiento para la transición de esta formación.</p>
+          <div class="option-list">
+            <button id="btnToolRoute" class="option">
+              <b>Ruta</b>
+              <small>toca el escenario para poner puntos de paso</small>
+            </button>
+            <button id="btnToolTurn" class="option">
+              <b>Vuelta</b>
+              <small>el grupo gira mientras se mueve</small>
+            </button>
+          </div>
+          <div class="grid2">
+            <button id="btnUndoWp" class="btn">Deshacer último punto</button>
+            <button id="btnClearRoutes" class="btn danger">Quitar movimientos</button>
+          </div>
+        </div>
+        <div class="card">
+          <h4>Dibujo</h4>
+          <label class="check"><input id="curved" type="checkbox"> Trayectorias curvas</label>
+          <label class="check"><input id="snap" type="checkbox" checked> Ajustar a la grilla</label>
+        </div>
+      </section>
 
-      <p class="eyebrow">Música y exportar</p>
-      <div class="row">
-        <button id="btnMusic">🎵 Música</button>
-        <span id="audioName" class="muted"></span>
-        <input id="audioFile" type="file" accept="audio/*" hidden>
-      </div>
-      <div class="row">
-        <button id="btnExportPng">PNG</button>
-        <button id="btnExportVideo">Video</button>
-        <button id="btnExportJson">JSON</button>
-        <button id="btnImport">Importar</button>
-        <button id="btnShare">Compartir</button>
-      </div>
-      <input id="importFile" type="file" accept="application/json,.json" hidden>
-    </section>
+      <!-- Pestaña 4: más -->
+      <section class="tab-panel" data-tab="mas" hidden>
+        <div class="card">
+          <h4>Música</h4>
+          <p class="help">Al elegir una canción, la app detecta sola su ritmo y en qué segundo cae el primer tiempo. Si quedó al doble o a la mitad, usa ÷2 o ×2.</p>
+          <div class="row">
+            <button id="btnMusic" class="btn">Elegir música</button>
+            <span id="audioName" class="muted"></span>
+            <input id="audioFile" type="file" accept="audio/*" hidden>
+          </div>
+          <div class="stepper">
+            <div class="step-text"><b>BPM</b><small>tiempos por minuto</small></div>
+            <div class="step-ctl">
+              <button id="btnHalf" class="pill" title="Dividir a la mitad">÷2</button>
+              <input id="bpm" type="number" min="30" max="300" step="0.01" value="120">
+              <button id="btnDouble" class="pill" title="Multiplicar por dos">×2</button>
+            </div>
+          </div>
+          <div class="stepper">
+            <div class="step-text"><b>Primer tiempo</b><small>segundo de la música donde parte el tiempo 1</small></div>
+            <input id="offset" type="number" min="0" step="0.01" value="0">
+          </div>
+          <button id="btnDetect" class="btn wide">Detectar otra vez</button>
+        </div>
+        <div class="card">
+          <h4>Exportar y compartir</h4>
+          <div class="grid2">
+            <button id="btnExportVideo" class="btn">Video</button>
+            <button id="btnExportPng" class="btn">Imagen (PNG)</button>
+            <button id="btnShare" class="btn">Compartir</button>
+            <button id="btnExportJson" class="btn">Guardar (JSON)</button>
+          </div>
+          <button id="btnImport" class="btn wide">Importar coreografía</button>
+          <input id="importFile" type="file" accept="application/json,.json" hidden>
+        </div>
+        <div class="card">
+          <h4>Coreografía</h4>
+          <div class="grid2">
+            <button id="btnRenameChoreo" class="btn">Renombrar</button>
+            <button id="btnDeleteChoreo" class="btn danger">Eliminar</button>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <nav class="tabbar">
+      <button class="tab on" data-go="formacion"><span>◎</span>Formación</button>
+      <button class="tab" data-go="bailarines"><span>👥</span>Bailarines</button>
+      <button class="tab" data-go="movimiento"><span>↻</span>Movimiento</button>
+      <button class="tab" data-go="mas"><span>⋯</span>Más</button>
+    </nav>
   </main>
 
   <dialog id="dlgNotes">
     <h3>Formación</h3>
     <input id="frameName" type="text" maxlength="30" placeholder="Nombre de la formación">
     <textarea id="notesText" rows="6" placeholder="Notas para los bailarines…"></textarea>
-    <div class="row"><button data-close>Listo</button></div>
+    <div class="row"><button data-close class="btn dark">Listo</button></div>
   </dialog>
 
   <dialog id="dlgCrews">
     <h3>Crews</h3>
     <div id="crewList"></div>
     <div class="row">
-      <button id="btnCrewFromSel">Crear con seleccionados</button>
-      <button id="btnCrewClear">Quitar de crew</button>
-      <button data-close>Cerrar</button>
+      <button id="btnCrewFromSel" class="btn">Crear con seleccionados</button>
+      <button id="btnCrewClear" class="btn">Quitar de crew</button>
+      <button data-close class="btn dark">Cerrar</button>
     </div>
   </dialog>
 

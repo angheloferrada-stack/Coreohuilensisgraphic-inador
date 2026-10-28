@@ -10,7 +10,7 @@
   const ASPECT = 16 / 10;
   const CENTER = { x: 0.5, y: 0.5 };
   const PPB = 24;   // píxeles por tiempo musical en la línea de tiempo
-  const END_W = 56; // ancho del bloque final
+  const MAX_T = 64; // tiempos máximos por parte
 
   const $ = (id) => document.getElementById(id);
   const uid = () => Math.random().toString(36).slice(2, 10);
@@ -57,6 +57,11 @@
   }
 
   // ---------- Datos y almacenamiento ----------
+  // Cada formación: "hold" = tiempos quieta, "beats" = tiempos para moverse a la siguiente
+  function newFrame(name, pos, hold = 0, beats = 8) {
+    return { id: uid(), name, notes: '', hold, beats, pos, routes: {}, spins: {} };
+  }
+
   function newChoreo(name) {
     const dancers = [];
     const pos = {};
@@ -66,9 +71,9 @@
       pos[d.id] = { x: 0.2 + 0.12 * i, y: 0.5 };
     }
     return {
-      id: uid(), name, bpm: 120, curved: false, snap: true,
+      id: uid(), name, bpm: 120, offset: 0, curved: false, snap: true,
       dancers, crews: [],
-      frames: [{ id: uid(), name: 'Inicio', notes: '', beats: 8, pos, routes: {} }],
+      frames: [newFrame('Inicio', pos, 0, 8)],
       updatedAt: Date.now()
     };
   }
@@ -99,10 +104,9 @@
   function touch() { chor().updatedAt = Date.now(); save(); }
 
   // ---------- Estado de la sesión ----------
-  // Todo el tiempo interno va en "tiempos" (beats). Los segundos salen del BPM.
   let frameIdx = 0;
   let mode = 'edit';           // 'edit' | 'preview' | 'play'
-  let tool = 'mover';          // 'mover' | 'ruta' | 'vuelta'
+  let tool = 'mover';          // 'mover' | 'ruta'
   let playBeat = 0;
   let playing = false;
   let exporting = false;
@@ -122,24 +126,33 @@
   let audioLoaded = false;
   let audioCtx = null, audioNode = null, audioOut = null;
 
-  // ---------- Línea de tiempo (en tiempos musicales) ----------
+  // ---------- Línea de tiempo: quietas y movimientos (en tiempos musicales) ----------
+  // Orden: quieta de la formación 1, movimiento 1→2, quieta de la 2, movimiento 2→3, ...
   function segmentsOf(c) {
     const segs = [];
     let t = 0;
-    for (let i = 0; i < c.frames.length - 1; i++) {
-      const dur = c.frames[i].beats;
-      segs.push({ from: i, to: i + 1, start: t, dur });
-      t += dur;
-    }
+    c.frames.forEach((f, i) => {
+      const hold = f.hold || 0;
+      if (hold > 0) { segs.push({ kind: 'hold', frame: i, start: t, dur: hold }); t += hold; }
+      if (i < c.frames.length - 1) {
+        segs.push({ kind: 'move', from: i, to: i + 1, start: t, dur: f.beats });
+        t += f.beats;
+      }
+    });
     return segs;
   }
   function totalOf(c) {
-    const s = segmentsOf(c);
-    return s.length ? s[s.length - 1].start + s[s.length - 1].dur : 0;
+    let t = 0;
+    c.frames.forEach((f, i) => {
+      t += f.hold || 0;
+      if (i < c.frames.length - 1) t += f.beats;
+    });
+    return t;
   }
+  // Inicio de la quieta de una formación (donde el cabezal se coloca al seleccionarla)
   function startOfFrame(c, i) {
     let t = 0;
-    for (let j = 0; j < i; j++) t += c.frames[j].beats;
+    for (let j = 0; j < i; j++) t += (c.frames[j].hold || 0) + c.frames[j].beats;
     return t;
   }
 
@@ -171,34 +184,11 @@
       + (-v0 + 3 * v1 - 3 * v2 + v3) * t * t * t);
     return { x: clamp01(cr(p0.x, p1.x, p2.x, p3.x)), y: clamp01(cr(p0.y, p1.y, p2.y, p3.y)) };
   }
-  function positionsAt(c, b) {
-    const segs = segmentsOf(c);
-    if (!segs.length || b <= 0) return clonePos(c.frames[0].pos);
-    const total = totalOf(c);
-    if (b >= total) return clonePos(c.frames[c.frames.length - 1].pos);
-    const s = segs.find((x) => b >= x.start && b < x.start + x.dur) || segs[segs.length - 1];
-    const p = ease(clamp01((b - s.start) / s.dur));
-    const A = c.frames[s.from].pos, B = c.frames[s.to].pos;
-    const f = c.frames[s.from];
-    const routes = f.routes || {};
-    const out = {};
-    for (const d of c.dancers) {
-      const a = A[d.id] || B[d.id] || CENTER, bb = B[d.id] || A[d.id] || CENTER;
-      const spun = spinPoint(f, A, B, d.id, p);
-      if (spun) { out[d.id] = spun; continue; }
-      const route = routes[d.id];
-      out[d.id] = route && route.length
-        ? routeAt(a, bb, route, p)
-        : tween(a, bb, p, c.curved, d.id);
-    }
-    return out;
-  }
   const centroid = (ids, pos) => {
     const ps = ids.map((id) => pos[id]).filter(Boolean);
     const n = ps.length || 1;
     return { x: ps.reduce((s, p) => s + p.x, 0) / n, y: ps.reduce((s, p) => s + p.y, 0) / n };
   };
-
   // Giro del grupo: el centro se traslada de A a B y cada bailarín gira a su alrededor
   // (en píxeles para que el giro no se deforme con la forma del escenario)
   function spinPoint(f, A, B, id, p) {
@@ -216,6 +206,32 @@
     const x = mA.x + (mB.x - mA.x) * p + (rX + (tX - rX) * p) / sw;
     const y = mA.y + (mB.y - mA.y) * p + (rY + (tY - rY) * p) / sh;
     return { x: clamp01(x), y: clamp01(y) };
+  }
+
+  // Posición de todos los bailarines en el tiempo b (en tiempos musicales)
+  function positionsAt(c, b) {
+    const segs = segmentsOf(c);
+    if (!segs.length || b <= 0) return clonePos(c.frames[0].pos);
+    const total = totalOf(c);
+    if (b >= total) return clonePos(c.frames[c.frames.length - 1].pos);
+    const s = segs.find((x) => b >= x.start && b < x.start + x.dur) || segs[segs.length - 1];
+    if (s.kind === 'hold') return clonePos(c.frames[s.frame].pos);
+
+    const p = ease(clamp01((b - s.start) / s.dur));
+    const f = c.frames[s.from];
+    const A = f.pos, B = c.frames[s.to].pos;
+    const routes = f.routes || {};
+    const out = {};
+    for (const d of c.dancers) {
+      const a = A[d.id] || B[d.id] || CENTER, bb = B[d.id] || A[d.id] || CENTER;
+      const spun = spinPoint(f, A, B, d.id, p);
+      if (spun) { out[d.id] = spun; continue; }
+      const route = routes[d.id];
+      out[d.id] = route && route.length
+        ? routeAt(a, bb, route, p)
+        : tween(a, bb, p, c.curved, d.id);
+    }
+    return out;
   }
 
   // ---------- Geometría y dibujo ----------
@@ -265,7 +281,7 @@
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
 
-    // Escenario (claro, al estilo de la libreta)
+    // Escenario
     const grad = ctx.createLinearGradient(0, sy, 0, sy + sh);
     grad.addColorStop(0, '#ffffff');
     grad.addColorStop(1, '#eeeaf4');
@@ -300,7 +316,7 @@
 
     const rad = dancerRadius();
 
-    // Trayectorias hacia la siguiente formación (rutas suavizadas o línea punteada)
+    // Trayectorias hacia la siguiente formación (solo en modo edición)
     if (edit && frameIdx < c.frames.length - 1) {
       const f = c.frames[frameIdx];
       const next = c.frames[frameIdx + 1].pos;
@@ -354,11 +370,11 @@
           }
           ctx.stroke();
         }
-        const B = toPx(b.x, b.y);
+        const T = toPx(b.x, b.y);
         ctx.setLineDash([3, 3]);
         ctx.lineWidth = 1.2;
         ctx.beginPath();
-        ctx.arc(B.x, B.y, rad * 0.8, 0, Math.PI * 2);
+        ctx.arc(T.x, T.y, rad * 0.8, 0, Math.PI * 2);
         ctx.stroke();
         ctx.setLineDash([]);
         ctx.globalAlpha = 1;
@@ -432,19 +448,19 @@
     return out;
   }
 
-  // ---------- Rutas: puntos intermedios y vueltas ----------
-  function guardRoutes() {
+  // ---------- Movimientos: rutas y vueltas ----------
+  function guardMovement() {
     const c = chor();
     if (mode !== 'edit') return false;
     if (frameIdx >= c.frames.length - 1) {
-      toast('La última formación no tiene transición hacia otra');
+      toast('La última formación no tiene movimiento hacia otra');
       return false;
     }
     return true;
   }
 
   function addWaypointAt(pt) {
-    if (!guardRoutes()) return;
+    if (!guardMovement()) return;
     if (!selection.size) return toast('Selecciona bailarines primero');
     const c = chor(), f = c.frames[frameIdx];
     f.routes = f.routes || {};
@@ -463,7 +479,7 @@
   }
 
   function spinSelection() {
-    if (!guardRoutes()) return;
+    if (!guardMovement()) return;
     const c = chor(), f = c.frames[frameIdx];
     const ids = [...selection].filter((id) => f.pos[id]);
     if (ids.length < 2) return toast('Selecciona al menos 2 bailarines para hacer vueltas');
@@ -600,7 +616,7 @@
 
   function play() {
     const c = chor();
-    if (c.frames.length < 2) return toast('Necesitas al menos 2 formaciones');
+    if (c.frames.length < 2 && !(c.frames[0].hold > 0)) return toast('Agrega una formación o una quieta para reproducir');
     if (mode === 'edit') playBeat = startOfFrame(c, frameIdx);
     if (playBeat >= totalOf(c)) playBeat = 0;
     mode = 'play';
@@ -608,7 +624,7 @@
     selection = new Set();
     clockStart = performance.now() - beatToSec(playBeat, c.bpm) * 1000;
     if (audioLoaded) {
-      audioEl.currentTime = beatToSec(playBeat, c.bpm);
+      audioEl.currentTime = beatToSec(playBeat, c.bpm) + (c.offset || 0);
       audioEl.play().catch(() => {});
     }
     updateTransport();
@@ -619,14 +635,15 @@
     const c = chor();
     const total = totalOf(c);
     const useAudio = audioLoaded && !audioEl.error && audioEl.readyState >= 2;
+    const off = c.offset || 0;
     let sec;
     if (useAudio) {
-      sec = audioEl.currentTime;
-      clockStart = performance.now() - sec * 1000; // el reloj sigue al audio si este termina antes
+      sec = audioEl.currentTime - off; // el tiempo 1 cae en el segundo "offset" de la música
+      clockStart = performance.now() - sec * 1000;
     } else {
       sec = (performance.now() - clockStart) / 1000;
     }
-    const b = secToBeat(sec, c.bpm);
+    const b = Math.max(0, secToBeat(sec, c.bpm));
     if (b >= total) {
       playBeat = total;
       stopPlay();
@@ -662,7 +679,7 @@
     if (playing) stopPlay();
     mode = 'preview';
     playBeat = b;
-    if (audioLoaded) audioEl.currentTime = beatToSec(b, c.bpm);
+    if (audioLoaded) audioEl.currentTime = beatToSec(b, c.bpm) + (c.offset || 0);
     render();
     renderPlayhead();
     updateStatus();
@@ -677,7 +694,27 @@
     if (x < left + 30 || x > left + w - 60) tl.scrollLeft = Math.max(0, x - w / 3);
   }
 
-  // ---------- Línea de tiempo: bloques, regla y cabezal ----------
+  // ---------- Línea de tiempo: bloques de quieta y movimiento ----------
+  function timelineBlock(kind, i, left, width, labelText, subText, on) {
+    const blk = el('div', `tl-block tl-${kind}` + (on ? ' on' : ''));
+    blk.dataset.frame = String(i);
+    blk.style.left = (left * PPB) + 'px';
+    blk.style.width = (width * PPB) + 'px';
+    const lab = el('span', 'tl-label');
+    lab.textContent = labelText;
+    const sub = el('span', 'tl-sub');
+    sub.textContent = subText;
+    blk.append(lab, sub);
+    return blk;
+  }
+
+  function addHandle(blk, kind, i) {
+    const h = el('div', 'tl-handle');
+    h.dataset.handle = kind;
+    h.dataset.frame = String(i);
+    blk.appendChild(h);
+  }
+
   function renderTimeline() {
     const c = chor();
     const total = totalOf(c);
@@ -685,7 +722,7 @@
     const scroll = tl.scrollLeft;
 
     const track = el('div', 'tl-track');
-    track.style.width = (total * PPB + END_W + 40) + 'px';
+    track.style.width = (total * PPB + 80) + 'px';
 
     const ruler = el('div', 'tl-ruler');
     for (let b = 0; b <= total; b += 4) {
@@ -696,30 +733,24 @@
     }
     track.appendChild(ruler);
 
-    let start = 0;
+    let t = 0;
     c.frames.forEach((f, i) => {
-      const last = i === n - 1;
-      const cls = 'tl-block' + (last ? ' end' : '') + (mode === 'edit' && i === frameIdx ? ' on' : '');
-      const blk = el('div', cls);
-      blk.dataset.frame = String(i);
-      blk.style.left = (start * PPB) + 'px';
-      blk.style.width = (last ? END_W : f.beats * PPB) + 'px';
+      const hold = f.hold || 0;
+      const isOn = mode === 'edit' && i === frameIdx;
 
-      const lab = el('span', 'tl-label');
-      lab.textContent = f.name;
-      blk.appendChild(lab);
+      // Quieta: la formación se queda en su lugar
+      const hb = timelineBlock('hold', i, t, hold, f.name, `quieta · ${hold} t`, isOn);
+      addHandle(hb, 'hold', i);
+      track.appendChild(hb);
+      t += hold;
 
-      if (!last) {
-        const sub = el('span', 'tl-sub');
-        sub.textContent = `${f.beats} tiempos · ${fmt(beatToSec(f.beats, c.bpm))}`;
-        blk.appendChild(sub);
-        const h = el('div', 'tl-handle');
-        h.dataset.handle = '1';
-        h.dataset.frame = String(i);
-        blk.appendChild(h);
-        start += f.beats;
+      // Movimiento: los bailarines caminan hacia la siguiente formación
+      if (i < n - 1) {
+        const mb = timelineBlock('move', i, t, f.beats, `→ ${c.frames[i + 1].name}`, `mover · ${f.beats} t`, false);
+        addHandle(mb, 'move', i);
+        track.appendChild(mb);
+        t += f.beats;
       }
-      track.appendChild(blk);
     });
 
     playheadEl = el('div', 'tl-playhead');
@@ -737,7 +768,9 @@
       const blk = e.target.closest('.tl-block');
       if (handle) {
         const i = +handle.dataset.frame;
-        drag = { kind: 'resize', frame: i, startX: e.clientX, startBeats: chor().frames[i].beats, changed: false };
+        const field = handle.dataset.handle === 'hold' ? 'hold' : 'beats';
+        const f = chor().frames[i];
+        drag = { kind: 'resize', frame: i, field, startX: e.clientX, startVal: f[field] || 0, changed: false };
       } else if (ruler) {
         drag = { kind: 'scrub' };
         scrubTo(xInTrack(e));
@@ -753,10 +786,11 @@
       if (!drag) return;
       if (drag.kind === 'resize') {
         const dx = e.clientX - drag.startX;
-        const nb = Math.max(1, Math.min(64, Math.round(drag.startBeats + dx / PPB)));
+        const min = drag.field === 'hold' ? 0 : 1;
+        const nv = Math.max(min, Math.min(MAX_T, Math.round(drag.startVal + dx / PPB)));
         const f = chor().frames[drag.frame];
-        if (nb !== f.beats) {
-          f.beats = nb;
+        if (nv !== (f[drag.field] || 0)) {
+          f[drag.field] = nv;
           drag.changed = true;
           renderTimeline();
         }
@@ -785,17 +819,29 @@
   }
 
   // ---------- Formaciones y bailarines ----------
+  function bump(field, delta) {
+    ensureEdit();
+    const c = chor(), f = c.frames[frameIdx];
+    if (field === 'hold') {
+      f.hold = Math.max(0, Math.min(MAX_T, (f.hold || 0) + delta));
+    } else {
+      if (frameIdx >= c.frames.length - 1) return toast('La última formación no tiene movimiento');
+      f.beats = Math.max(1, Math.min(MAX_T, f.beats + delta));
+    }
+    touch();
+    updateTransport();
+  }
+
   function addFrame(duplicate) {
     ensureEdit();
     const c = chor(), src = c.frames[frameIdx];
-    const nf = {
-      id: uid(),
-      name: duplicate ? `${src.name} (copia)` : `Formación ${c.frames.length + 1}`,
-      notes: duplicate ? src.notes : '',
-      beats: 8,
-      pos: clonePos(src.pos),
-      routes: {}
-    };
+    const nf = newFrame(
+      duplicate ? `${src.name} (copia)` : `Formación ${c.frames.length + 1}`,
+      clonePos(src.pos),
+      duplicate ? src.hold || 0 : 0,
+      8
+    );
+    nf.notes = duplicate ? src.notes : '';
     c.frames.splice(frameIdx + 1, 0, nf);
     touch();
     setFrame(frameIdx + 1);
@@ -844,7 +890,7 @@
     const list = $('crewList');
     list.innerHTML = '';
     if (!c.crews.length) {
-      list.innerHTML = '<p class="muted">Aún no hay crews. Selecciona bailarines en el escenario y crea uno.</p>';
+      list.innerHTML = '<p class="help">Aún no hay crews. Selecciona bailarines en el escenario y crea uno.</p>';
       return;
     }
     for (const cr of c.crews) {
@@ -929,39 +975,173 @@
   }
 
   function updateStatus() {
-    const c = chor();
+    const c = chor(), n = c.frames.length, f = c.frames[frameIdx];
     let text;
     if (mode !== 'edit') {
       text = `${fmt(beatToSec(playBeat, c.bpm))} / ${fmt(beatToSec(totalOf(c), c.bpm))}`;
     } else if (tool === 'ruta') {
-      text = `Ruta: toca el escenario para añadir un punto a ${selection.size} bailarín(es)`;
+      text = `Ruta: toca el escenario para poner un punto a ${selection.size} bailarín(es)`;
     } else {
-      text = `Formación ${frameIdx + 1}/${c.frames.length}: ${c.frames[frameIdx].name}`;
+      text = `${frameIdx + 1}/${n} · ${f.name}` +
+        (frameIdx < n - 1 ? ` · quieta ${f.hold || 0} · mover ${f.beats}` : ' · última');
     }
     $('status').textContent = text;
   }
 
+  function showTab(name) {
+    document.querySelectorAll('.tab-panel').forEach((s) => { s.hidden = s.dataset.tab !== name; });
+    document.querySelectorAll('.tab').forEach((b) => b.classList.toggle('on', b.dataset.go === name));
+  }
+
   function updateTransport() {
-    const c = chor(), n = c.frames.length;
-    const f = c.frames[frameIdx];
-    const inEdit = mode === 'edit' && frameIdx < n - 1;
+    const c = chor(), n = c.frames.length, f = c.frames[frameIdx];
+    const last = frameIdx >= n - 1;
+    const inEdit = mode === 'edit' && !last;
     if (!inEdit) tool = 'mover';
-    $('btnPlay').textContent = playing ? '⏸' : '▶';
+
+    $('btnPlay').textContent = playing ? '❚❚' : '▶';
     $('btnPlay').disabled = exporting;
     $('btnExportVideo').disabled = exporting;
-    $('bpm').value = c.bpm;
-    $('curved').checked = c.curved;
-    $('snap').checked = c.snap;
-    $('transBeats').value = f.beats;
-    $('transBeats').disabled = mode !== 'edit' || frameIdx >= n - 1;
+
+    $('holdVal').textContent = f.hold || 0;
+    $('beatVal').textContent = last ? '—' : f.beats;
+    $('beatMinus').disabled = last;
+    $('beatPlus').disabled = last;
     $('btnDelFrame').disabled = n <= 1;
-    $('btnNotes').classList.toggle('dot', !!f.notes);
+
     for (const id of ['btnToolRoute', 'btnToolTurn', 'btnUndoWp', 'btnClearRoutes']) {
       $(id).disabled = !inEdit;
     }
     $('btnToolRoute').classList.toggle('on', tool === 'ruta');
+
+    $('bpm').value = c.bpm;
+    $('offset').value = (c.offset || 0).toFixed(2);
+    $('curved').checked = c.curved;
+    $('snap').checked = c.snap;
+
     renderTimeline();
     updateStatus();
+  }
+
+  let audioBlob = null;
+
+  // ---------- Detección automática de BPM y del primer tiempo ----------
+  // Busca el ritmo que mejor "calza" con los golpes de la música (pulso regular) y,
+  // con la misma cuenta, en qué segundo cae cada golpe del pulso.
+  function analyzeBuffer(buf) {
+    const sr = buf.sampleRate;
+    const chans = [];
+    for (let i = 0; i < buf.numberOfChannels; i++) chans.push(buf.getChannelData(i));
+
+    // 1) Mezcla a mono y baja la tasa a ~11 kHz (basta para encontrar golpes)
+    const D = Math.max(1, Math.round(sr / 11025));
+    const M = Math.floor(buf.length / D);
+    const mono = new Float32Array(M);
+    for (let i = 0; i < M; i++) {
+      let s = 0;
+      for (let k = 0; k < D; k++) {
+        for (const ch of chans) s += ch[i * D + k];
+      }
+      mono[i] = s / (D * chans.length);
+    }
+    // Nos quedamos con los graves (bombo y bajo): el hi-hat agudo confunde el pulso
+    const alpha = 1 - Math.exp(-2 * Math.PI * 150 / (sr / D));
+    let y = 0;
+    for (let i = 0; i < M; i++) {
+      y += alpha * (mono[i] - y);
+      mono[i] = y;
+    }
+
+    // 2) Energía por cuadros de 128 muestras; un "golpe" es un aumento repentino
+    const H = 128;
+    const F = Math.floor(M / H);
+    const fps = (sr / D) / H;
+    const amp = new Float64Array(F);
+    for (let j = 0; j < F; j++) {
+      let e = 0;
+      for (let k = 0; k < H; k++) { const v = mono[j * H + k]; e += v * v; }
+      amp[j] = Math.sqrt(e / H);
+    }
+    const onset = new Float64Array(F);
+    let mean = 0;
+    for (let j = 1; j < F; j++) {
+      onset[j] = Math.max(0, amp[j] - amp[j - 1]);
+      mean += onset[j];
+    }
+    mean /= Math.max(1, F - 1);
+    for (let j = 0; j < F; j++) onset[j] -= mean;
+
+    // 3) Qué tan fuerte es un pulso a una velocidad dada (transformada en esa frecuencia)
+    const probe = (bpm) => {
+      const w = 2 * Math.PI * (bpm / 60) / fps;
+      const cw = Math.cos(w), sw = Math.sin(w);
+      let zr = 1, zi = 0, re = 0, im = 0;
+      for (let j = 0; j < F; j++) {
+        const x = onset[j];
+        re += x * zr;
+        im += x * zi;
+        const nr = zr * cw + zi * sw;
+        zi = zi * cw - zr * sw;
+        zr = nr;
+      }
+      return { re, im, w, p: re * re + im * im };
+    };
+
+    // 4) Busca entre 60 y 200 BPM: primero grueso, luego fino (0,01 BPM)
+    const refine = (center) => {
+      let r = { bpm: center, p: probe(center).p };
+      for (let k = -50; k <= 50; k++) {
+        const b = center + k * 0.01;
+        const p = probe(b).p;
+        if (p > r.p) r = { bpm: b, p };
+      }
+      return r;
+    };
+    let coarse = { bpm: 120, p: -1 };
+    for (let b = 60; b <= 200; b += 0.5) {
+      const p = probe(b).p;
+      if (p > coarse.p) coarse = { bpm: b, p };
+    }
+    let best = refine(coarse.bpm);
+    // Evita el error "al doble": si el tiempo a la mitad también tiene fuerza, ese es el ritmo
+    for (;;) {
+      if (best.bpm / 2 < 60) break;
+      const half = refine(best.bpm / 2);
+      if (half.p < 0.5 * best.p) break;
+      best = half;
+    }
+
+    // 5) Primer tiempo: la fase del pulso dentro de un tiempo
+    const bpm = Math.round(best.bpm * 100) / 100;
+    const q = probe(bpm);
+    const period = 60 / bpm;
+    const P = 2 * Math.PI / q.w;            // duración de un tiempo, en cuadros
+    let i0 = -Math.atan2(q.im, q.re) / q.w;
+    i0 = ((i0 % P) + P) % P;
+    const offset = Math.round(((i0 / fps) % period) * 100) / 100;
+    return { bpm, offset };
+  }
+
+  async function detectTempo(file) {
+    const c = chor();
+    const AC = window.AudioContext || window.webkitAudioContext;
+    const ac = new AC();
+    try {
+      const buf = await ac.decodeAudioData(await file.arrayBuffer());
+      const res = analyzeBuffer(buf);
+      c.bpm = res.bpm;
+      c.offset = res.offset;
+      c.updatedAt = Date.now();
+      save();
+      if (chor() === c) updateTransport();
+      toast(`Ritmo: ${res.bpm} BPM · primer tiempo a ${res.offset.toFixed(2)} s`);
+      return true;
+    } catch (_) {
+      toast('No pude leer el ritmo de esa música');
+      return false;
+    } finally {
+      ac.close();
+    }
   }
 
   function loadAudio(file) {
@@ -970,8 +1150,10 @@
     if (audioEl.src.startsWith('blob:')) URL.revokeObjectURL(audioEl.src);
     audioEl.src = URL.createObjectURL(file);
     audioLoaded = true;
-    $('audioName').textContent = file.name;
+    audioBlob = file;
     $('audioFile').value = '';
+    $('audioName').textContent = `${file.name} · analizando ritmo…`;
+    detectTempo(file).then(() => { $('audioName').textContent = file.name; });
   }
 
   function ensureAudioGraph() {
@@ -998,7 +1180,7 @@
   function exportVideo() {
     if (exporting) return;
     const c = chor(), total = totalOf(c);
-    if (!total) return toast('Agrega al menos 2 formaciones');
+    if (!total) return toast('Agrega tiempos de quieta o movimiento para exportar');
     if (!window.MediaRecorder) return toast('Tu navegador no puede grabar video');
     stopPlay();
 
@@ -1035,7 +1217,7 @@
     selection = new Set();
     updateTransport();
     rec.start(250);
-    if (audioLoaded) { audioEl.currentTime = 0; audioEl.play().catch(() => {}); }
+    if (audioLoaded) { audioEl.currentTime = c.offset || 0; audioEl.play().catch(() => {}); }
 
     const totalSec = beatToSec(total, c.bpm);
     const t0 = performance.now();
@@ -1082,12 +1264,15 @@
       data.name = (data.name || 'Importada').slice(0, 40);
       data.bpm = data.bpm || 120;
       data.crews = data.crews || [];
+      data.offset = data.offset || 0;
       data.updatedAt = Date.now();
       data.frames.forEach((fr) => {
         fr.beats = fr.beats || 8;
+        fr.hold = fr.hold || 0;
         fr.notes = fr.notes || '';
         fr.name = fr.name || 'Formación';
         fr.routes = fr.routes || {};
+        fr.spins = fr.spins || {};
       });
       db.choreos.push(data);
       switchTo(data.id);
@@ -1104,9 +1289,9 @@
     $('dlgNotes').showModal();
   }
 
-  function setToolToggle(name) {
-    if (!guardRoutes()) return;
-    tool = tool === name ? 'mover' : name;
+  function setToolRuta() {
+    if (!guardMovement()) return;
+    tool = tool === 'ruta' ? 'mover' : 'ruta';
     updateTransport();
   }
 
@@ -1139,6 +1324,15 @@
     $('btnPrev').onclick = () => setFrame(frameIdx - 1);
     $('btnNext').onclick = () => setFrame(frameIdx + 1);
 
+    document.querySelectorAll('.tab').forEach((b) => {
+      b.onclick = () => showTab(b.dataset.go);
+    });
+
+    $('holdMinus').onclick = () => bump('hold', -1);
+    $('holdPlus').onclick = () => bump('hold', 1);
+    $('beatMinus').onclick = () => bump('beats', -1);
+    $('beatPlus').onclick = () => bump('beats', 1);
+
     $('btnAddFrame').onclick = () => addFrame(false);
     $('btnDupFrame').onclick = () => addFrame(true);
     $('btnDelFrame').onclick = delFrame;
@@ -1151,26 +1345,7 @@
     $('notesText').oninput = (e) => {
       chor().frames[frameIdx].notes = e.target.value;
       touch();
-      $('btnNotes').classList.toggle('dot', !!e.target.value);
     };
-    $('transBeats').onchange = (e) => {
-      const f = chor().frames[frameIdx];
-      f.beats = Math.max(1, Math.min(64, parseInt(e.target.value, 10) || 8));
-      touch();
-      updateTransport();
-    };
-    $('bpm').onchange = (e) => {
-      chor().bpm = Math.max(30, Math.min(300, parseInt(e.target.value, 10) || 120));
-      touch();
-      updateTransport();
-    };
-    $('curved').onchange = (e) => { chor().curved = e.target.checked; touch(); render(); };
-    $('snap').onchange = (e) => { chor().snap = e.target.checked; touch(); render(); };
-
-    $('btnToolRoute').onclick = () => setToolToggle('ruta');
-    $('btnToolTurn').onclick = spinSelection;
-    $('btnUndoWp').onclick = undoWaypoint;
-    $('btnClearRoutes').onclick = clearRoutes;
 
     $('btnAddDancer').onclick = addDancer;
     $('btnRemoveDancer').onclick = removeSelected;
@@ -1178,6 +1353,30 @@
     $('btnCrewFromSel').onclick = createCrewFromSelection;
     $('btnCrewClear').onclick = clearCrewFromSelection;
 
+    $('btnToolRoute').onclick = setToolRuta;
+    $('btnToolTurn').onclick = spinSelection;
+    $('btnUndoWp').onclick = undoWaypoint;
+    $('btnClearRoutes').onclick = clearRoutes;
+    $('curved').onchange = (e) => { chor().curved = e.target.checked; touch(); render(); };
+    $('snap').onchange = (e) => { chor().snap = e.target.checked; touch(); render(); };
+
+    const setBpm = (v) => {
+      chor().bpm = Math.max(30, Math.min(300, Math.round(v * 100) / 100));
+      touch();
+      updateTransport();
+    };
+    $('bpm').onchange = (e) => setBpm(parseFloat(e.target.value) || 120);
+    $('btnHalf').onclick = () => setBpm(chor().bpm / 2);
+    $('btnDouble').onclick = () => setBpm(chor().bpm * 2);
+    $('offset').onchange = (e) => {
+      chor().offset = Math.max(0, parseFloat(e.target.value) || 0);
+      touch();
+      updateTransport();
+    };
+    $('btnDetect').onclick = () => {
+      if (!audioBlob) return toast('Primero elige una música');
+      detectTempo(audioBlob).then(() => updateTransport());
+    };
     $('btnMusic').onclick = () => $('audioFile').click();
     $('audioFile').onchange = (e) => loadAudio(e.target.files[0]);
     audioEl.onerror = () => {
@@ -1185,13 +1384,13 @@
       $('audioName').textContent = 'No se pudo cargar esa música';
     };
 
-    $('btnExportPng').onclick = exportPng;
     $('btnExportVideo').onclick = exportVideo;
+    $('btnExportPng').onclick = exportPng;
+    $('btnShare').onclick = shareChoreo;
     $('btnExportJson').onclick = () => {
       const c = chor();
       download(new Blob([JSON.stringify(c, null, 2)], { type: 'application/json' }), `${safeName(c.name)}.json`);
     };
-    $('btnShare').onclick = shareChoreo;
     $('btnImport').onclick = () => $('importFile').click();
     $('importFile').onchange = importChoreo;
 
