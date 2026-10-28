@@ -18,7 +18,7 @@
   <header class="top">
     <div class="brand-row">
       <img src="logo.png" alt="Huilén" class="logo">
-      <div class="brand"><strong>Escenario</strong><span>Formaciones</span></div>
+      <div class="brand"><strong>Escenario <em id="verBadge" class="ver-badge"></em></strong><span>Formaciones</span></div>
     </div>
     <div class="top-actions">
       <select id="choreoSelect" aria-label="Coreografía"></select>
@@ -38,10 +38,18 @@
       <span id="status" class="status"></span>
     </div>
 
+    <div class="tl-tools">
+      <span class="hint">Arrastra escenas o la música</span>
+      <span class="zoom">
+        <button id="btnZoomOut" class="round sm" aria-label="Alejar la línea de tiempo">−</button>
+        <button id="btnZoomIn" class="round sm" aria-label="Acercar la línea de tiempo">+</button>
+      </span>
+    </div>
     <div id="timeline" class="timeline" aria-label="Línea de tiempo"></div>
     <div class="legend">
-      <span><i class="sw hold"></i>Quieta: se quedan quietos</span>
-      <span><i class="sw move"></i>Mover: caminan a la siguiente</span>
+      <span><i class="sw scene"></i>Escena</span>
+      <span><i class="sw move"></i>Transición</span>
+      <span><i class="sw audio"></i>Música</span>
     </div>
 
     <div class="panel">
@@ -69,10 +77,10 @@
         </div>
 
         <div class="card">
-          <h4>Formaciones</h4>
-          <p class="help">Una nueva formación aparece después de la que estás viendo.</p>
+          <h4>Escenas</h4>
+          <p class="help">Una nueva escena aparece después de la que estás viendo. Arrástrala en la línea de tiempo para cambiarla de lugar.</p>
           <div class="grid2">
-            <button id="btnAddFrame" class="btn">+ Nueva formación</button>
+            <button id="btnAddFrame" class="btn">+ Nueva escena</button>
             <button id="btnDupFrame" class="btn">Duplicar</button>
             <button id="btnNotes" class="btn">Nombre y notas</button>
             <button id="btnDelFrame" class="btn danger">Borrar</button>
@@ -101,21 +109,23 @@
       <section class="tab-panel" data-tab="movimiento" hidden>
         <div class="card">
           <h4>Movimientos</h4>
-          <p class="help">Primero selecciona bailarines en el escenario. Después elige un movimiento para la transición de esta formación.</p>
+          <p class="help">Primero selecciona bailarines en el escenario. Después elige qué hacen en esta formación.</p>
           <div class="option-list">
             <button id="btnToolRoute" class="option">
               <b>Ruta</b>
-              <small>toca el escenario para poner puntos de paso</small>
+              <small>toca el escenario para poner puntos de paso mientras caminan</small>
             </button>
-            <button id="btnToolTurn" class="option">
-              <b>Vuelta en grupo</b>
-              <small>el grupo gira mientras se mueve</small>
-            </button>
-            <button id="btnToolSelf" class="option">
+            <button id="btnTurnSelf" class="option">
               <b>Vuelta propia</b>
               <small>cada bailarín gira sobre sí mismo</small>
             </button>
+            <button id="btnTurnGroup" class="option">
+              <b>Vuelta en grupo o pareja</b>
+              <small>giran alrededor de su centro</small>
+            </button>
           </div>
+          <p class="help">Vueltas de esta formación</p>
+          <div id="turnList" class="turn-list"></div>
           <div class="grid2">
             <button id="btnUndoWp" class="btn">Deshacer último punto</button>
             <button id="btnClearRoutes" class="btn danger">Quitar movimientos</button>
@@ -153,6 +163,20 @@
           <button id="btnDetect" class="btn wide">Detectar otra vez</button>
         </div>
         <div class="card">
+          <h4>Video de referencia</h4>
+          <p class="help">Se muestra arriba del video que exportas, para comparar tu formación con el video original.</p>
+          <div class="row">
+            <button id="btnRefVideo" class="btn">Elegir video</button>
+            <span id="refName" class="muted"></span>
+            <input id="refFile" type="file" accept="video/*" hidden>
+          </div>
+          <div class="stepper">
+            <div class="step-text"><b>Inicio del video</b><small>segundo del video donde parte</small></div>
+            <input id="refStart" type="number" min="0" step="0.1" value="0">
+          </div>
+          <button id="btnRefClear" class="btn wide danger">Quitar video de referencia</button>
+        </div>
+        <div class="card">
           <h4>Exportar y compartir</h4>
           <div class="grid2">
             <button id="btnExportVideo" class="btn">Video</button>
@@ -171,6 +195,11 @@
           </div>
           <a class="btn" href="pc.html">Abrir versión para PC</a>
         </div>
+        <div class="card">
+          <h4>Versión</h4>
+          <p class="help">Estás usando la versión <b id="verLabel"></b>.</p>
+          <button id="btnNews" class="btn wide">Ver novedades</button>
+        </div>
       </section>
     </div>
 
@@ -183,8 +212,8 @@
   </main>
 
   <dialog id="dlgNotes">
-    <h3>Formación</h3>
-    <input id="frameName" type="text" maxlength="30" placeholder="Nombre de la formación">
+    <h3>Escena</h3>
+    <input id="frameName" type="text" maxlength="30" placeholder="Nombre de la escena">
     <textarea id="notesText" rows="6" placeholder="Notas para los bailarines…"></textarea>
     <div class="row"><button data-close class="btn dark">Listo</button></div>
   </dialog>
@@ -197,6 +226,38 @@
       <button id="btnCrewClear" class="btn">Quitar de crew</button>
       <button data-close class="btn dark">Cerrar</button>
     </div>
+  </dialog>
+
+  <dialog id="dlgTurn">
+    <h3 id="turnTitle">Vuelta</h3>
+    <div class="field">Quién gira
+      <select id="turnType">
+        <option value="self">Cada uno sobre sí mismo</option>
+        <option value="group">Alrededor del grupo (pareja o grupo)</option>
+      </select>
+    </div>
+    <div class="field">Cuándo
+      <select id="turnWhen">
+        <option value="move">Mientras camina a la siguiente</option>
+        <option value="hold">Mientras está quieta</option>
+      </select>
+    </div>
+    <div class="grid2">
+      <div class="field">Grados <input id="turnDeg" type="number" step="10" value="360"></div>
+      <div class="field">Empieza (%) <input id="turnFrom" type="number" min="0" max="90" value="30"></div>
+    </div>
+    <div class="field">Termina (%) <input id="turnTo" type="number" min="5" max="90" value="70"></div>
+    <p class="help">Por ejemplo, de 30 a 70 hace la vuelta en medio del movimiento.</p>
+    <div class="row">
+      <button id="btnTurnOk" class="btn dark">Crear vuelta</button>
+      <button data-close class="btn">Cancelar</button>
+    </div>
+  </dialog>
+
+  <dialog id="dlgNews">
+    <h3>Novedades</h3>
+    <div id="newsList"></div>
+    <div class="row"><button data-close class="btn dark">Listo</button></div>
   </dialog>
 
   <div id="toast" class="toast" role="status"></div>

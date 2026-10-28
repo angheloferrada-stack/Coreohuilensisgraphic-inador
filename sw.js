@@ -1,4 +1,4 @@
-const CACHE = 'escenario-v6';
+const CACHE = 'escenario-v8';
 const ASSETS = ['./', './index.html', './pc.html', './styles.css', './pc.css', './app.js', './manifest.json', './icon.svg', './logo.png'];
 
 self.addEventListener('install', (e) => {

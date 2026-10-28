@@ -2,16 +2,39 @@
 (() => {
   'use strict';
 
-  // ---------- Constantes y utilidades ----------
+  const APP_VERSION = 'v8';
+  const CHANGELOG = [
+    { v: 'v8', fecha: '28 oct 2026', items: [
+      'Línea de tiempo tipo storyboard: cada escena tiene su dibujo y las transiciones van entre ellas',
+      'Arrastra una escena para cambiarla de lugar',
+      'La pista de la música se ve en la línea de tiempo; arrástrala para sincronizar el primer tiempo con el baile',
+      'Zoom de la línea de tiempo (− y +)',
+      'Vueltas propias o en grupo/pareja, en la quieta o al caminar, con inicio y fin en % del movimiento',
+      'Las vueltas se combinan con las rutas',
+      'Video de referencia que se exporta arriba del video del baile',
+      'Número de versión y novedades'
+    ] },
+    { v: 'v7', items: ['Versión para PC (pc.html) con las 4 listas a la vista', 'Vuelta propia de cada bailarín', 'La vuelta de grupo pasó a llamarse "Vuelta en grupo"'] },
+    { v: 'v6', items: ['Detección automática del BPM y del primer tiempo desde la música', 'Botones ÷2 y ×2 y campo Primer tiempo'] },
+    { v: 'v5', items: ['Quieta y mover separadas en cada formación', 'Menú con pestañas y botones − y +'] },
+    { v: 'v4', items: ['Vueltas del grupo mientras se mueven'] },
+    { v: 'v3', items: ['Rutas por bailarín y por grupo'] },
+    { v: 'v2', items: ['Línea de tiempo para ajustar la duración de cada transición'] },
+    { v: 'v1', items: ['Versión inicial: escenario, bailarines, música, exportar y compartir'] }
+  ];
+
   const STORE_KEY = 'escenario.v1';
   const PALETTE = ['#ff6b6b', '#1fb5b0', '#ffd166', '#5b7cfa', '#9b5de5', '#06d6a0',
                    '#f78c6b', '#ef476f', '#118ab2', '#ffa62b', '#8ac926', '#f15bb5'];
   const SNAP = 0.05;
   const ASPECT = 16 / 10;
   const CENTER = { x: 0.5, y: 0.5 };
-  const PPB = 24;   // píxeles por tiempo musical en la línea de tiempo
-  const MAX_T = 64; // tiempos máximos por parte
+  const ZOOMS = [12, 18, 24, 32, 44];
+  const MAX_T = 64;     // tiempos máximos por parte
+  const MAX_TO = 0.9;   // una vuelta termina como máximo al 90 % del movimiento o de la quieta
+  const PEAK_RATE = 50; // muestras de la onda por segundo
 
+  // ---------- Utilidades ----------
   const $ = (id) => document.getElementById(id);
   const uid = () => Math.random().toString(36).slice(2, 10);
   const labelFor = (i) => (i < 26 ? String.fromCharCode(65 + i) : String(i + 1));
@@ -28,6 +51,12 @@
     const e = document.createElement(tag);
     if (cls) e.className = cls;
     return e;
+  };
+  const btn = (label, fn) => {
+    const b = document.createElement('button');
+    b.textContent = label;
+    b.onclick = fn;
+    return b;
   };
 
   function toast(msg) {
@@ -49,17 +78,11 @@
     setTimeout(() => URL.revokeObjectURL(url), 4000);
   }
 
-  function btn(label, fn) {
-    const b = document.createElement('button');
-    b.textContent = label;
-    b.onclick = fn;
-    return b;
-  }
-
-  // ---------- Datos y almacenamiento ----------
-  // Cada formación: "hold" = tiempos quieta, "beats" = tiempos para moverse a la siguiente
+  // ---------- Datos ----------
+  // Escena = posición de los bailarines + "quieta" (hold) + "transición" hacia la siguiente (beats)
+  // Vuelta = { type: 'self' | 'group', when: 'move' | 'hold', ids, deg, from, to } (from/to en fracción del tramo)
   function newFrame(name, pos, hold = 0, beats = 8) {
-    return { id: uid(), name, notes: '', hold, beats, pos, routes: {}, spins: {}, turns: {} };
+    return { id: uid(), name, notes: '', hold, beats, pos, routes: {}, turns: [] };
   }
 
   function newChoreo(name) {
@@ -73,15 +96,59 @@
     return {
       id: uid(), name, bpm: 120, offset: 0, curved: false, snap: true,
       dancers, crews: [],
-      frames: [newFrame('Inicio', pos, 0, 8)],
+      frames: [newFrame('Inicio', pos, 4, 8)],
       updatedAt: Date.now()
     };
+  }
+
+  // Lleva datos guardados en versiones anteriores al formato actual
+  function normFrame(fr) {
+    fr.name = fr.name || 'Escena';
+    fr.hold = fr.hold || 0;
+    fr.beats = fr.beats || 8;
+    fr.notes = fr.notes || '';
+    fr.pos = fr.pos || {};
+    fr.routes = fr.routes || {};
+    if (!Array.isArray(fr.turns)) {
+      const list = [];
+      for (const [id, deg] of Object.entries(fr.turns || {})) {
+        list.push({ id: uid(), type: 'self', when: 'move', ids: [id], deg, from: 0, to: MAX_TO });
+      }
+      for (const [id, deg] of Object.entries(fr.holdTurns || {})) {
+        list.push({ id: uid(), type: 'self', when: 'hold', ids: [id], deg, from: 0, to: MAX_TO });
+      }
+      const seen = new Set();
+      for (const sp of Object.values(fr.spins || {})) {
+        const key = sp.ids.join('|') + sp.deg;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        list.push({ id: uid(), type: 'group', when: 'move', ids: [...sp.ids], deg: sp.deg, from: 0, to: MAX_TO });
+      }
+      fr.turns = list;
+    }
+    delete fr.holdTurns;
+    delete fr.spins;
+    return fr;
+  }
+
+  function normChoreo(c) {
+    c.bpm = c.bpm || 120;
+    c.offset = c.offset || 0;
+    c.crews = c.crews || [];
+    c.dancers = c.dancers || [];
+    if (!c.frames || !c.frames.length) {
+      const pos = Object.fromEntries(c.dancers.map((d) => [d.id, { x: 0.5, y: 0.5 }]));
+      c.frames = [newFrame('Inicio', pos, 0, 8)];
+    }
+    c.frames.forEach(normFrame);
+    return c;
   }
 
   function loadDB() {
     try {
       const raw = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
       if (raw && Array.isArray(raw.choreos) && raw.choreos.length) {
+        raw.choreos.forEach(normChoreo);
         if (!raw.choreos.some((c) => c.id === raw.activeId)) raw.activeId = raw.choreos[0].id;
         return raw;
       }
@@ -102,11 +169,12 @@
   }
   const chor = () => db.choreos.find((c) => c.id === db.activeId) || db.choreos[0];
   function touch() { chor().updatedAt = Date.now(); save(); }
+  const dancerOf = (id) => chor().dancers.find((d) => d.id === id);
 
   // ---------- Estado de la sesión ----------
   let frameIdx = 0;
-  let mode = 'edit';           // 'edit' | 'preview' | 'play'
-  let tool = 'mover';          // 'mover' | 'ruta'
+  let mode = 'edit';   // 'edit' | 'preview' | 'play'
+  let tool = 'mover';  // 'mover' | 'ruta'
   let playBeat = 0;
   let playing = false;
   let exporting = false;
@@ -116,18 +184,25 @@
   let drag = null;
   let marquee = null;
   let view = { w: 0, h: 0, dpr: 1, sx: 0, sy: 0, sw: 1, sh: 1 };
+  let zoomIdx = 2;
+  let PPB = ZOOMS[zoomIdx];   // píxeles por tiempo en la línea de tiempo
 
   const canvas = $('stage');
   const ctx = canvas.getContext('2d');
   const tl = $('timeline');
   let playheadEl = null;
+
   const audioEl = new Audio();
   audioEl.preload = 'auto';
-  let audioLoaded = false;
+  let audioBlob = null, audioPeaks = null, audioLoaded = false;
   let audioCtx = null, audioNode = null, audioOut = null;
 
-  // ---------- Línea de tiempo: quietas y movimientos (en tiempos musicales) ----------
-  // Orden: quieta de la formación 1, movimiento 1→2, quieta de la 2, movimiento 2→3, ...
+  const refEl = document.createElement('video');
+  refEl.muted = true;
+  refEl.playsInline = true;
+  let refLoaded = false;
+
+  // ---------- Tiempos: escena (quieta) y transición (mover) ----------
   function segmentsOf(c) {
     const segs = [];
     let t = 0;
@@ -149,7 +224,7 @@
     });
     return t;
   }
-  // Inicio de la quieta de una formación (donde el cabezal se coloca al seleccionarla)
+  // Inicio de la escena i (donde cae el cabezal al seleccionarla)
   function startOfFrame(c, i) {
     let t = 0;
     for (let j = 0; j < i; j++) t += (c.frames[j].hold || 0) + c.frames[j].beats;
@@ -189,43 +264,14 @@
     const n = ps.length || 1;
     return { x: ps.reduce((s, p) => s + p.x, 0) / n, y: ps.reduce((s, p) => s + p.y, 0) / n };
   };
-  // Giro del grupo: el centro se traslada de A a B y cada bailarín gira a su alrededor
-  // (en píxeles para que el giro no se deforme con la forma del escenario)
-  function spinPoint(f, A, B, id, p) {
-    const sp = f.spins && f.spins[id];
-    if (!sp || !A[id] || !B[id]) return null;
-    const ids = sp.ids.filter((i) => A[i] && B[i]);
-    if (ids.length < 2) return null;
-    const mA = centroid(ids, A), mB = centroid(ids, B);
-    const sw = view.sw, sh = view.sh;
-    const relX = (A[id].x - mA.x) * sw, relY = (A[id].y - mA.y) * sh;
-    const th = (sp.deg * Math.PI / 180) * p;
-    const ca = Math.cos(th), sa = Math.sin(th);
-    const rX = relX * ca - relY * sa, rY = relX * sa + relY * ca;
-    const tX = (B[id].x - mB.x) * sw, tY = (B[id].y - mB.y) * sh;
-    const x = mA.x + (mB.x - mA.x) * p + (rX + (tX - rX) * p) / sw;
-    const y = mA.y + (mB.y - mA.y) * p + (rY + (tY - rY) * p) / sh;
-    return { x: clamp01(x), y: clamp01(y) };
-  }
 
-  // Posición de todos los bailarines en el tiempo b (en tiempos musicales)
-  function positionsAt(c, b) {
-    const segs = segmentsOf(c);
-    if (!segs.length || b <= 0) return clonePos(c.frames[0].pos);
-    const total = totalOf(c);
-    if (b >= total) return clonePos(c.frames[c.frames.length - 1].pos);
-    const s = segs.find((x) => b >= x.start && b < x.start + x.dur) || segs[segs.length - 1];
-    if (s.kind === 'hold') return clonePos(c.frames[s.frame].pos);
-
-    const p = ease(clamp01((b - s.start) / s.dur));
-    const f = c.frames[s.from];
-    const A = f.pos, B = c.frames[s.to].pos;
-    const routes = f.routes || {};
+  // Posición base de cada bailarín en la transición (ruta o trayectoria) con progreso p
+  function basePositions(c, f, B, p) {
     const out = {};
+    const routes = f.routes || {};
     for (const d of c.dancers) {
-      const a = A[d.id] || B[d.id] || CENTER, bb = B[d.id] || A[d.id] || CENTER;
-      const spun = spinPoint(f, A, B, d.id, p);
-      if (spun) { out[d.id] = spun; continue; }
+      const a = f.pos[d.id] || B[d.id] || CENTER;
+      const bb = B[d.id] || a;
       const route = routes[d.id];
       out[d.id] = route && route.length
         ? routeAt(a, bb, route, p)
@@ -234,7 +280,71 @@
     return out;
   }
 
-  // ---------- Geometría y dibujo ----------
+  // Vueltas en grupo: el grupo gira alrededor de su centro (en píxeles para no deformar el giro).
+  // La parte del giro que desplaza a los bailarines se deshace antes de llegar al final del tramo,
+  // así la siguiente formación empieza donde debe.
+  function applyTurns(f, when, local, pos) {
+    for (const t of f.turns || []) {
+      if (t.when !== when || t.type !== 'group') continue;
+      const ids = t.ids.filter((id) => pos[id]);
+      if (ids.length < 2) continue;
+      const w1 = Math.max(t.to, t.from + 0.01);
+      const u = clamp01((local - t.from) / (w1 - t.from));
+      if (u <= 0) continue;
+      const th = (t.deg * Math.PI / 180) * ease(u);
+      const m = local <= w1 ? 1 : 1 - ease(clamp01((local - w1) / (1 - w1)));
+      const C = centroid(ids, pos);
+      const ca = Math.cos(th), sa = Math.sin(th);
+      for (const id of ids) {
+        const dx = (pos[id].x - C.x) * view.sw, dy = (pos[id].y - C.y) * view.sh;
+        const rx = dx * ca - dy * sa, ry = dx * sa + dy * ca;
+        pos[id] = {
+          x: clamp01(pos[id].x + m * (rx - dx) / view.sw),
+          y: clamp01(pos[id].y + m * (ry - dy) / view.sh)
+        };
+      }
+    }
+  }
+
+  // Ángulo de las vueltas propias de cada bailarín en el tiempo b (para dibujar la marca que gira)
+  function selfAngles(c, b) {
+    const s = segmentsOf(c).find((x) => b >= x.start && b < x.start + x.dur);
+    if (!s) return {};
+    const hold = s.kind === 'hold';
+    const f = c.frames[hold ? s.frame : s.from];
+    const local = (b - s.start) / s.dur;
+    const out = {};
+    for (const t of f.turns || []) {
+      if (t.type !== 'self' || (t.when === 'hold') !== hold) continue;
+      if (local < t.from) continue;
+      const w1 = Math.max(t.to, t.from + 0.01);
+      const u = clamp01((local - t.from) / (w1 - t.from));
+      for (const id of t.ids) out[id] = (out[id] || 0) + t.deg * ease(u);
+    }
+    return out;
+  }
+
+  // Posición de todos los bailarines en el tiempo b (en tiempos musicales)
+  function positionsAt(c, b) {
+    const segs = segmentsOf(c);
+    if (!segs.length || b <= 0) return clonePos(c.frames[0].pos);
+    if (b >= totalOf(c)) return clonePos(c.frames[c.frames.length - 1].pos);
+    const s = segs.find((x) => b >= x.start && b < x.start + x.dur) || segs[segs.length - 1];
+    const local = clamp01((b - s.start) / s.dur);
+    let pos;
+    if (s.kind === 'hold') {
+      const f = c.frames[s.frame];
+      pos = clonePos(f.pos);
+      applyTurns(f, 'hold', local, pos);
+    } else {
+      const f = c.frames[s.from];
+      pos = basePositions(c, f, c.frames[s.to].pos, ease(local));
+      applyTurns(f, 'move', local, pos);
+    }
+    return pos;
+  }
+
+  // ---------- Dibujo del escenario ----------
   const toPx = (x, y) => ({ x: view.sx + x * view.sw, y: view.sy + y * view.sh });
   const toNorm = (px, py) => ({ x: (px - view.sx) / view.sw, y: (py - view.sy) / view.sh });
   const dancerRadius = () => Math.max(13, Math.min(view.sw, view.sh) * 0.045);
@@ -274,7 +384,21 @@
     render();
   }
 
-  function drawScene(pos, opts, turns) {
+  // Arco de una vuelta: punteado = al caminar, continuo = en la quieta
+  function turnArc(color, q, r, deg, dashed) {
+    ctx.save();
+    ctx.setLineDash(dashed ? [4, 4] : []);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2.5;
+    ctx.globalAlpha = dashed ? 1 : 0.6;
+    ctx.beginPath();
+    const a0 = -Math.PI / 2;
+    ctx.arc(q.x, q.y, r, a0, a0 + deg * Math.PI / 180, deg < 0);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawScene(pos, opts, notches, pf) {
     const c = chor();
     const edit = mode === 'edit' && !opts.clean;
     const { dpr, w, h, sx, sy, sw, sh } = view;
@@ -316,68 +440,80 @@
 
     const rad = dancerRadius();
 
-    // Trayectorias hacia la siguiente formación (solo en modo edición)
-    if (edit && frameIdx < c.frames.length - 1) {
-      const f = c.frames[frameIdx];
-      const next = c.frames[frameIdx + 1].pos;
-      for (const d of c.dancers) {
-        const a = pos[d.id], b = next[d.id];
-        if (!a || !b) continue;
-        const route = f.routes && f.routes[d.id];
-        const col = dancerColor(d);
-        ctx.globalAlpha = 0.7;
-        ctx.strokeStyle = col;
-        const spin = f.spins && f.spins[d.id];
-        if (spin) {
-          ctx.setLineDash([]);
+    // Vista previa de la escena: trayectoria hacia la siguiente y vueltas
+    if (edit && pf) {
+      const fi = c.frames.indexOf(pf);
+      if (fi >= 0 && fi < c.frames.length - 1) {
+        const next = c.frames[fi + 1].pos;
+        for (const d of c.dancers) {
+          const a = pos[d.id], b = next[d.id];
+          if (!a || !b) continue;
+          const route = pf.routes && pf.routes[d.id];
+          const col = dancerColor(d);
+          ctx.globalAlpha = 0.7;
+          ctx.strokeStyle = col;
           ctx.lineWidth = 2;
-          ctx.beginPath();
-          for (let s = 0; s <= 30; s++) {
-            const q0 = spinPoint(f, pos, next, d.id, ease(s / 30));
-            if (!q0) break;
-            const q = toPx(q0.x, q0.y);
-            if (s === 0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y);
-          }
-          ctx.stroke();
-        } else if (route && route.length) {
-          ctx.setLineDash([]);
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          for (let s = 0; s <= 30; s++) {
-            const q = toPx(...Object.values(routeAt(a, b, route, s / 30)));
-            if (s === 0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y);
-          }
-          ctx.stroke();
-          for (const wp of route) {
-            const q = toPx(wp.x, wp.y);
+          if (route && route.length) {
+            ctx.setLineDash([]);
             ctx.beginPath();
-            ctx.arc(q.x, q.y, 4, 0, Math.PI * 2);
-            ctx.fillStyle = col;
-            ctx.fill();
-          }
-        } else {
-          const A = toPx(a.x, a.y), B = toPx(b.x, b.y);
-          ctx.setLineDash([5, 5]);
-          ctx.lineWidth = 1.5;
-          ctx.beginPath();
-          ctx.moveTo(A.x, A.y);
-          if (c.curved) {
-            const k = ctrlPoint(a, b, d.id);
-            const K = toPx(k.x, k.y);
-            ctx.quadraticCurveTo(K.x, K.y, B.x, B.y);
+            for (let s = 0; s <= 30; s++) {
+              const r = routeAt(a, b, route, s / 30);
+              const q = toPx(r.x, r.y);
+              if (s === 0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y);
+            }
+            ctx.stroke();
+            for (const wp of route) {
+              const q = toPx(wp.x, wp.y);
+              ctx.beginPath();
+              ctx.arc(q.x, q.y, 4, 0, Math.PI * 2);
+              ctx.fillStyle = col;
+              ctx.fill();
+            }
           } else {
-            ctx.lineTo(B.x, B.y);
+            const A = toPx(a.x, a.y), B = toPx(b.x, b.y);
+            ctx.setLineDash([5, 5]);
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.moveTo(A.x, A.y);
+            if (c.curved) {
+              const k = ctrlPoint(a, b, d.id);
+              const K = toPx(k.x, k.y);
+              ctx.quadraticCurveTo(K.x, K.y, B.x, B.y);
+            } else {
+              ctx.lineTo(B.x, B.y);
+            }
+            ctx.stroke();
           }
+          const T = toPx(b.x, b.y);
+          ctx.setLineDash([3, 3]);
+          ctx.lineWidth = 1.2;
+          ctx.beginPath();
+          ctx.arc(T.x, T.y, rad * 0.8, 0, Math.PI * 2);
           ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.globalAlpha = 1;
         }
-        const T = toPx(b.x, b.y);
-        ctx.setLineDash([3, 3]);
-        ctx.lineWidth = 1.2;
-        ctx.beginPath();
-        ctx.arc(T.x, T.y, rad * 0.8, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.globalAlpha = 1;
+      }
+      for (const t of pf.turns || []) {
+        const ids = t.ids.filter((id) => pos[id]);
+        if (!ids.length) continue;
+        const dashed = t.when === 'move';
+        if (t.type === 'self') {
+          for (const id of ids) {
+            const d = dancerOf(id);
+            if (!d) continue;
+            turnArc(dancerColor(d), toPx(pos[id].x, pos[id].y), rad * (dashed ? 1.45 : 1.85), t.deg, dashed);
+          }
+        } else if (ids.length >= 2) {
+          const C = centroid(ids, pos);
+          const Cp = toPx(C.x, C.y);
+          let R = 0;
+          for (const id of ids) {
+            const q = toPx(pos[id].x, pos[id].y);
+            R = Math.max(R, Math.hypot(q.x - Cp.x, q.y - Cp.y));
+          }
+          turnArc('#111111', Cp, R + rad * 1.4, t.deg, dashed);
+        }
       }
     }
 
@@ -394,28 +530,16 @@
       ctx.lineWidth = isSel ? 3 : 1.5;
       ctx.strokeStyle = isSel ? '#111111' : 'rgba(0,0,0,0.25)';
       ctx.stroke();
-      // Vuelta propia: en edición se ve el arco que va a girar; al reproducir, una marca que gira
-      const turn = turns[d.id];
-      if (turn !== undefined) {
-        if (edit) {
-          ctx.setLineDash([4, 4]);
-          ctx.strokeStyle = dancerColor(d);
-          ctx.lineWidth = 2.5;
-          ctx.beginPath();
-          const a0 = -Math.PI / 2;
-          ctx.arc(q.x, q.y, rad * 1.45, a0, a0 + turn * Math.PI / 180, turn < 0);
-          ctx.stroke();
-          ctx.setLineDash([]);
-        } else {
-          const a = -Math.PI / 2 + turn * Math.PI / 180;
-          ctx.strokeStyle = 'rgba(17,17,17,0.85)';
-          ctx.lineWidth = 3;
-          ctx.lineCap = 'round';
-          ctx.beginPath();
-          ctx.moveTo(q.x + Math.cos(a) * rad * 0.3, q.y + Math.sin(a) * rad * 0.3);
-          ctx.lineTo(q.x + Math.cos(a) * rad * 0.95, q.y + Math.sin(a) * rad * 0.95);
-          ctx.stroke();
-        }
+      // Marca de vuelta propia durante la reproducción
+      if (!edit && notches[d.id] !== undefined) {
+        const a = -Math.PI / 2 + notches[d.id] * Math.PI / 180;
+        ctx.strokeStyle = 'rgba(17,17,17,0.85)';
+        ctx.lineWidth = 3;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(q.x + Math.cos(a) * rad * 0.3, q.y + Math.sin(a) * rad * 0.3);
+        ctx.lineTo(q.x + Math.cos(a) * rad * 0.95, q.y + Math.sin(a) * rad * 0.95);
+        ctx.stroke();
       }
       ctx.fillStyle = '#111';
       ctx.font = `700 ${Math.round(rad * 0.85)}px "DM Sans", system-ui`;
@@ -441,10 +565,31 @@
     const c = chor();
     const edit = mode === 'edit';
     const pos = edit ? c.frames[frameIdx].pos : positionsAt(c, playBeat);
-    const turns = edit
-      ? (frameIdx < c.frames.length - 1 ? (c.frames[frameIdx].turns || {}) : {})
-      : selfAngles(c, playBeat);
-    drawScene(pos, opts, turns);
+    const notches = edit ? {} : selfAngles(c, playBeat);
+    drawScene(pos, opts, notches, edit ? c.frames[frameIdx] : null);
+  }
+
+  // Miniatura de una escena para la línea de tiempo
+  function drawThumb(cv, f, w, h) {
+    const c = chor();
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    cv.width = Math.max(1, Math.round(w * dpr));
+    cv.height = Math.max(1, Math.round(h * dpr));
+    cv.style.width = w + 'px';
+    cv.style.height = h + 'px';
+    const g = cv.getContext('2d');
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.fillStyle = '#f4f2f8';
+    g.fillRect(0, 0, w, h);
+    const r = Math.max(2, Math.min(w, h) * 0.07);
+    for (const d of c.dancers) {
+      const p = f.pos[d.id];
+      if (!p) continue;
+      g.beginPath();
+      g.fillStyle = dancerColor(d);
+      g.arc(4 + p.x * (w - 8), 4 + p.y * (h - 8), r, 0, Math.PI * 2);
+      g.fill();
+    }
   }
 
   // ---------- Interacción con el escenario ----------
@@ -475,12 +620,11 @@
     return out;
   }
 
-  // ---------- Movimientos: rutas y vueltas ----------
   function guardMovement() {
     const c = chor();
     if (mode !== 'edit') return false;
     if (frameIdx >= c.frames.length - 1) {
-      toast('La última formación no tiene movimiento hacia otra');
+      toast('La última escena no tiene transición hacia otra');
       return false;
     }
     return true;
@@ -502,46 +646,7 @@
     }
     touch();
     render();
-    updateStatus();
-  }
-
-  function spinSelection() {
-    if (!guardMovement()) return;
-    const c = chor(), f = c.frames[frameIdx];
-    const ids = [...selection].filter((id) => f.pos[id]);
-    if (ids.length < 2) return toast('Selecciona al menos 2 bailarines para hacer vueltas');
-    const deg = parseFloat(prompt('Grados de giro mientras se mueven (360 = una vuelta, 720 = dos)', '360'));
-    if (!deg) return;
-    f.spins = f.spins || {};
-    for (const id of ids) f.spins[id] = { deg, ids };
-    touch();
-    render();
-    updateStatus();
-  }
-
-  // Vuelta propia: cada bailarín gira sobre sí mismo mientras se mueve (no cambia su camino)
-  function spinSelfSelection() {
-    if (!guardMovement()) return;
-    const c = chor(), f = c.frames[frameIdx];
-    const ids = [...selection].filter((id) => f.pos[id]);
-    if (!ids.length) return toast('Selecciona bailarines primero');
-    const deg = parseFloat(prompt('Grados que gira cada bailarín sobre sí mismo (360 = una vuelta)', '360'));
-    if (!deg) return;
-    f.turns = f.turns || {};
-    for (const id of ids) f.turns[id] = deg;
-    touch();
-    render();
-    updateStatus();
-  }
-
-  // Ángulo de la vuelta propia de cada bailarín en el tiempo b (durante el movimiento)
-  function selfAngles(c, b) {
-    const s = segmentsOf(c).find((x) => x.kind === 'move' && b >= x.start && b < x.start + x.dur);
-    if (!s) return {};
-    const p = ease(clamp01((b - s.start) / s.dur));
-    const out = {};
-    for (const [id, deg] of Object.entries(c.frames[s.from].turns || {})) out[id] = deg * p;
-    return out;
+    updateTransport();
   }
 
   function undoWaypoint() {
@@ -558,7 +663,7 @@
     if (!n) return toast('Esos bailarines no tienen puntos de ruta');
     touch();
     render();
-    updateStatus();
+    updateTransport();
   }
 
   function clearRoutes() {
@@ -566,17 +671,72 @@
     let n = 0;
     for (const id of selection) {
       if (f.routes && f.routes[id]) { delete f.routes[id]; n++; }
-      if (f.turns && f.turns[id]) { delete f.turns[id]; n++; }
-      const sp = f.spins && f.spins[id];
-      if (sp) {
-        for (const other of sp.ids) delete f.spins[other];
-        n++;
-      }
     }
-    if (!n) return toast('Esos bailarines no tienen ruta ni vuelta');
+    const before = (f.turns || []).length;
+    f.turns = (f.turns || []).filter((t) => !t.ids.some((id) => selection.has(id)));
+    n += before - f.turns.length;
+    if (!n) return toast('Esos bailarines no tienen movimientos');
     touch();
     render();
-    updateStatus();
+    updateTransport();
+  }
+
+  // ---------- Vueltas (creadas desde un cuadro) ----------
+  function openTurnDialog(type) {
+    if (mode !== 'edit') return;
+    if (!selection.size) return toast('Selecciona bailarines primero');
+    $('turnType').value = type;
+    $('turnTitle').textContent = type === 'self' ? 'Vuelta propia' : 'Vuelta en grupo o pareja';
+    $('dlgTurn').showModal();
+  }
+
+  function createTurn() {
+    const c = chor(), f = c.frames[frameIdx];
+    const type = $('turnType').value, when = $('turnWhen').value;
+    const deg = parseFloat($('turnDeg').value) || 0;
+    const fromPct = clamp01((parseFloat($('turnFrom').value) || 0) / 100);
+    const toPct = Math.min(MAX_TO, Math.max(0.05, (parseFloat($('turnTo').value) || 90) / 100));
+    const from = Math.min(fromPct, MAX_TO - 0.05);
+    if (toPct <= from + 0.04) return toast('El final debe ser después del inicio');
+    if (!deg) return toast('Pon los grados de la vuelta');
+    const ids = [...selection].filter((id) => f.pos[id]);
+    if (!ids.length) return toast('Selecciona bailarines primero');
+    if (type === 'group' && ids.length < 2) return toast('En grupo o pareja selecciona al menos 2 bailarines');
+    if (when === 'move' && !guardMovement()) return;
+    if (when === 'hold' && !(f.hold > 0)) return toast('Primero sube la quieta de esta escena');
+    f.turns = f.turns || [];
+    f.turns.push({ id: uid(), type, when, ids, deg, from, to: toPct });
+    $('dlgTurn').close();
+    touch();
+    render();
+    updateTransport();
+  }
+
+  function renderTurnList() {
+    const list = $('turnList');
+    list.innerHTML = '';
+    const c = chor(), f = c.frames[frameIdx];
+    const turns = mode === 'edit' ? (f.turns || []) : [];
+    if (!turns.length) {
+      list.innerHTML = '<p class="help">Aún no hay vueltas en esta escena.</p>';
+      return;
+    }
+    for (const t of turns) {
+      const row = el('div', 'turn-row');
+      const names = t.ids.map((id) => (dancerOf(id) || {}).label).filter(Boolean).join(', ');
+      const txt = el('span');
+      txt.textContent = `${t.type === 'self' ? 'Propia' : 'En grupo'} · ${t.deg}° · ${t.when === 'hold' ? 'quieta' : 'caminando'} · ${Math.round(t.from * 100)}–${Math.round(t.to * 100)}% · ${names}`;
+      const x = btn('×', () => {
+        f.turns = f.turns.filter((u) => u.id !== t.id);
+        touch();
+        render();
+        updateTransport();
+      });
+      x.className = 'turn-x';
+      x.setAttribute('aria-label', 'Quitar vuelta');
+      row.append(txt, x);
+      list.appendChild(row);
+    }
   }
 
   function wireStage() {
@@ -599,7 +759,7 @@
         drag = { kind: 'marquee' };
       }
       render();
-      updateStatus();
+      updateTransport();
     });
 
     canvas.addEventListener('pointermove', (e) => {
@@ -669,7 +829,7 @@
 
   function play() {
     const c = chor();
-    if (c.frames.length < 2 && !(c.frames[0].hold > 0)) return toast('Agrega una formación o una quieta para reproducir');
+    if (totalOf(c) <= 0) return toast('Agrega tiempos de quieta o movimiento para reproducir');
     if (mode === 'edit') playBeat = startOfFrame(c, frameIdx);
     if (playBeat >= totalOf(c)) playBeat = 0;
     mode = 'play';
@@ -720,10 +880,7 @@
     updateTransport();
   }
 
-  function xInTrack(e) {
-    const r = tl.querySelector('.tl-track').getBoundingClientRect();
-    return e.clientX - r.left;
-  }
+  const xInTrack = (e) => e.clientX - tl.querySelector('.tl-track').getBoundingClientRect().left;
 
   function scrubTo(x) {
     const c = chor();
@@ -747,35 +904,22 @@
     if (x < left + 30 || x > left + w - 60) tl.scrollLeft = Math.max(0, x - w / 3);
   }
 
-  // ---------- Línea de tiempo: bloques de quieta y movimiento ----------
-  function timelineBlock(kind, i, left, width, labelText, subText, on) {
-    const blk = el('div', `tl-block tl-${kind}` + (on ? ' on' : ''));
-    blk.dataset.frame = String(i);
-    blk.style.left = (left * PPB) + 'px';
-    blk.style.width = (width * PPB) + 'px';
-    const lab = el('span', 'tl-label');
-    lab.textContent = labelText;
-    const sub = el('span', 'tl-sub');
-    sub.textContent = subText;
-    blk.append(lab, sub);
-    return blk;
-  }
-
-  function addHandle(blk, kind, i) {
+  // ---------- Línea de tiempo tipo storyboard ----------
+  function addHandle(parent, kind, i) {
     const h = el('div', 'tl-handle');
     h.dataset.handle = kind;
     h.dataset.frame = String(i);
-    blk.appendChild(h);
+    parent.appendChild(h);
   }
 
   function renderTimeline() {
-    const c = chor();
-    const total = totalOf(c);
-    const n = c.frames.length;
+    const c = chor(), n = c.frames.length, total = totalOf(c);
     const scroll = tl.scrollLeft;
+    const W = total * PPB + 200;
 
     const track = el('div', 'tl-track');
-    track.style.width = (total * PPB + 80) + 'px';
+    track.style.width = W + 'px';
+    track.style.backgroundSize = `${PPB}px 100%`; // una línea por tiempo
 
     const ruler = el('div', 'tl-ruler');
     for (let b = 0; b <= total; b += 4) {
@@ -786,59 +930,156 @@
     }
     track.appendChild(ruler);
 
+    // Escenas (quieta) y transiciones (mover), en orden
     let t = 0;
     c.frames.forEach((f, i) => {
       const hold = f.hold || 0;
-      const isOn = mode === 'edit' && i === frameIdx;
+      const on = mode === 'edit' && i === frameIdx;
+      const sw = Math.max(hold * PPB, 14);
 
-      // Quieta: la formación se queda en su lugar
-      const hb = timelineBlock('hold', i, t, hold, f.name, `quieta · ${hold} t`, isOn);
-      addHandle(hb, 'hold', i);
-      track.appendChild(hb);
+      const sc = el('div', 'tl-scene' + (on ? ' on' : ''));
+      sc.dataset.frame = String(i);
+      sc.dataset.kind = 'scene';
+      sc.style.left = (t * PPB) + 'px';
+      sc.style.width = sw + 'px';
+      const cv = el('canvas', 'tl-thumb');
+      sc.appendChild(cv);
+      const lab = el('span', 'tl-label');
+      lab.textContent = `${f.name} · ${hold} t`;
+      sc.appendChild(lab);
+      addHandle(sc, 'hold', i);
+      track.appendChild(sc);
+      drawThumb(cv, f, sw, 52);
       t += hold;
 
-      // Movimiento: los bailarines caminan hacia la siguiente formación
       if (i < n - 1) {
-        const mb = timelineBlock('move', i, t, f.beats, `→ ${c.frames[i + 1].name}`, `mover · ${f.beats} t`, false);
+        const mb = el('div', 'tl-move');
+        mb.dataset.frame = String(i);
+        mb.dataset.kind = 'move';
+        mb.style.left = (t * PPB) + 'px';
+        mb.style.width = (f.beats * PPB) + 'px';
+        const l1 = el('span', 'tl-label');
+        l1.textContent = `→ ${c.frames[i + 1].name}`;
+        const l2 = el('span', 'tl-sub');
+        l2.textContent = `caminan · ${f.beats} t`;
+        mb.append(l1, l2);
         addHandle(mb, 'move', i);
         track.appendChild(mb);
         t += f.beats;
       }
     });
 
+    const add = el('button', 'tl-add');
+    add.textContent = '+ Escena';
+    add.style.left = (total * PPB + 14) + 'px';
+    add.title = 'Agregar una escena al final';
+    add.onclick = () => {
+      ensureEdit();
+      frameIdx = chor().frames.length - 1;
+      addFrame(false);
+    };
+    track.appendChild(add);
+
+    // Pista de la música: la onda queda alineada con los tiempos
+    const au = el('div', 'tl-audio');
+    au.dataset.kind = 'audio';
+    const wave = el('canvas');
+    au.appendChild(wave);
+    if (!audioPeaks) {
+      const empty = el('span', 'tl-empty');
+      empty.textContent = 'Sin música · elígela en la pestaña Más';
+      au.appendChild(empty);
+    }
+    track.appendChild(au);
+
     playheadEl = el('div', 'tl-playhead');
     track.appendChild(playheadEl);
     tl.replaceChildren(track);
     tl.scrollLeft = scroll;
+    drawWave(wave, W, 36);
     renderPlayhead();
+  }
+
+  function drawWave(cv, W, H) {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    cv.width = Math.round(W * dpr);
+    cv.height = Math.round(H * dpr);
+    cv.style.width = W + 'px';
+    cv.style.height = H + 'px';
+    const g = cv.getContext('2d');
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, W, H);
+    if (!audioPeaks) return;
+    const c = chor(), period = 60 / c.bpm, off = c.offset || 0;
+    const { data, rate } = audioPeaks;
+    g.fillStyle = 'rgba(155, 93, 229, 0.6)';
+    const mid = H / 2;
+    for (let x = 0; x < W; x++) {
+      const i0 = Math.floor((off + (x / PPB) * period) * rate);
+      if (i0 >= data.length) break;
+      const i1 = Math.max(i0 + 1, Math.floor((off + ((x + 1) / PPB) * period) * rate));
+      let mx = 0;
+      for (let k = Math.max(0, i0); k < i1 && k < data.length; k++) if (data[k] > mx) mx = data[k];
+      const hgt = Math.max(1, mx * (H - 8));
+      g.fillRect(x, mid - hgt / 2, 1, hgt);
+    }
+  }
+
+  // Al soltar una escena arrastrada: calcula su nuevo lugar según dónde quedó
+  function reorderFrame(i, dx) {
+    const c = chor(), n = c.frames.length;
+    const centers = [];
+    let s = 0;
+    c.frames.forEach((f, j) => {
+      const w = ((f.hold || 0) + (j < n - 1 ? f.beats : 0)) * PPB;
+      centers.push(s + w / 2);
+      s += w;
+    });
+    const mine = centers[i] + dx;
+    let target = 0;
+    for (let j = 0; j < n; j++) if (j !== i && centers[j] < mine) target++;
+    if (target === i) return false;
+    const [fr] = c.frames.splice(i, 1);
+    c.frames.splice(target, 0, fr);
+    touch();
+    return target;
+  }
+
+  function setZoom(delta) {
+    zoomIdx = Math.max(0, Math.min(ZOOMS.length - 1, zoomIdx + delta));
+    PPB = ZOOMS[zoomIdx];
+    renderTimeline();
+    keepPlayheadVisible();
+    $('btnZoomIn').disabled = zoomIdx >= ZOOMS.length - 1;
+    $('btnZoomOut').disabled = zoomIdx <= 0;
   }
 
   function wireTimeline() {
     tl.addEventListener('pointerdown', (e) => {
-      if (exporting) return;
-      const handle = e.target.closest('[data-handle]');
-      const ruler = e.target.closest('.tl-ruler');
-      const blk = e.target.closest('.tl-block');
-      if (handle) {
-        const i = +handle.dataset.frame;
-        const field = handle.dataset.handle === 'hold' ? 'hold' : 'beats';
-        const f = chor().frames[i];
-        drag = { kind: 'resize', frame: i, field, startX: e.clientX, startVal: f[field] || 0, changed: false };
-      } else if (ruler) {
+      if (exporting || e.button > 0) return;
+      if (e.target.closest('.tl-add')) return;
+      const h = e.target.closest('[data-handle]');
+      const blk = e.target.closest('.tl-scene, .tl-move');
+      const au = e.target.closest('.tl-audio');
+      if (h) {
+        const i = +h.dataset.frame;
+        const field = h.dataset.handle === 'hold' ? 'hold' : 'beats';
+        drag = { kind: 'resize', frame: i, field, startX: e.clientX, startVal: chor().frames[i][field] || 0, changed: false };
+      } else if (blk) {
+        drag = { kind: 'scene', frame: +blk.dataset.frame, startX: e.clientX, moved: false, el: blk };
+      } else if (au) {
+        drag = { kind: 'audio', startX: e.clientX, startOffset: chor().offset || 0, moved: false, x0: xInTrack(e) };
+      } else {
         drag = { kind: 'scrub' };
         scrubTo(xInTrack(e));
-      } else if (blk) {
-        drag = { kind: 'click', frame: +blk.dataset.frame, startX: e.clientX, moved: false };
-      } else {
-        return;
       }
       tl.setPointerCapture(e.pointerId);
     });
 
     tl.addEventListener('pointermove', (e) => {
       if (!drag) return;
+      const dx = e.clientX - drag.startX;
       if (drag.kind === 'resize') {
-        const dx = e.clientX - drag.startX;
         const min = drag.field === 'hold' ? 0 : 1;
         const nv = Math.max(min, Math.min(MAX_T, Math.round(drag.startVal + dx / PPB)));
         const f = chor().frames[drag.frame];
@@ -847,38 +1088,56 @@
           drag.changed = true;
           renderTimeline();
         }
+      } else if (drag.kind === 'scene') {
+        if (Math.abs(dx) > 6) drag.moved = true;
+        if (drag.moved) {
+          drag.el.style.transform = `translateX(${dx}px)`;
+          drag.el.style.zIndex = '5';
+        }
+      } else if (drag.kind === 'audio') {
+        if (Math.abs(dx) > 4) drag.moved = true;
+        if (drag.moved) {
+          const c = chor();
+          c.offset = Math.max(0, Math.round((drag.startOffset - (dx / PPB) * (60 / c.bpm)) * 100) / 100);
+          renderTimeline();
+        }
       } else if (drag.kind === 'scrub') {
         scrubTo(xInTrack(e));
-      } else if (drag.kind === 'click' && Math.abs(e.clientX - drag.startX) > 6) {
-        drag.moved = true;
       }
     });
 
-    const end = (cancelled) => {
+    const end = (e, cancelled) => {
       if (!drag) return;
       const d = drag;
       drag = null;
       if (d.kind === 'resize') {
         if (d.changed) touch();
         updateTransport();
+      } else if (d.kind === 'scene') {
+        if (cancelled) { renderTimeline(); return; }
+        if (!d.moved) { setFrame(d.frame); return; }
+        const target = reorderFrame(d.frame, e.clientX - d.startX);
+        if (target === false) renderTimeline();
+        else setFrame(target);
+      } else if (d.kind === 'audio') {
+        if (d.moved) { touch(); updateTransport(); }
+        else if (!cancelled) scrubTo(d.x0);
       } else if (d.kind === 'scrub') {
         updateTransport();
-      } else if (d.kind === 'click' && !cancelled && !d.moved) {
-        setFrame(d.frame);
       }
     };
-    tl.addEventListener('pointerup', () => end(false));
-    tl.addEventListener('pointercancel', () => end(true));
+    tl.addEventListener('pointerup', (e) => end(e, false));
+    tl.addEventListener('pointercancel', (e) => end(e, true));
   }
 
-  // ---------- Formaciones y bailarines ----------
+  // ---------- Escenas y bailarines ----------
   function bump(field, delta) {
     ensureEdit();
     const c = chor(), f = c.frames[frameIdx];
     if (field === 'hold') {
       f.hold = Math.max(0, Math.min(MAX_T, (f.hold || 0) + delta));
     } else {
-      if (frameIdx >= c.frames.length - 1) return toast('La última formación no tiene movimiento');
+      if (frameIdx >= c.frames.length - 1) return toast('La última escena no tiene transición');
       f.beats = Math.max(1, Math.min(MAX_T, f.beats + delta));
     }
     touch();
@@ -889,9 +1148,9 @@
     ensureEdit();
     const c = chor(), src = c.frames[frameIdx];
     const nf = newFrame(
-      duplicate ? `${src.name} (copia)` : `Formación ${c.frames.length + 1}`,
+      duplicate ? `${src.name} (copia)` : `Escena ${c.frames.length + 1}`,
       clonePos(src.pos),
-      duplicate ? src.hold || 0 : 0,
+      duplicate ? src.hold || 0 : 4,
       8
     );
     nf.notes = duplicate ? src.notes : '';
@@ -902,7 +1161,7 @@
 
   function delFrame() {
     const c = chor();
-    if (c.frames.length <= 1) return toast('Debe quedar al menos una formación');
+    if (c.frames.length <= 1) return toast('Debe quedar al menos una escena');
     if (!confirm(`¿Borrar "${c.frames[frameIdx].name}"?`)) return;
     c.frames.splice(frameIdx, 1);
     touch();
@@ -926,12 +1185,15 @@
     if (!selection.size) return toast('Selecciona bailarines primero');
     if (!confirm(`¿Quitar ${selection.size} bailarín(es) de toda la coreografía?`)) return;
     c.dancers = c.dancers.filter((d) => !selection.has(d.id));
-    c.frames.forEach((f) => selection.forEach((id) => {
-      delete f.pos[id];
-      if (f.routes) delete f.routes[id];
-      if (f.spins) delete f.spins[id];
-      if (f.turns) delete f.turns[id];
-    }));
+    c.frames.forEach((f) => {
+      selection.forEach((id) => {
+        delete f.pos[id];
+        if (f.routes) delete f.routes[id];
+      });
+      f.turns = (f.turns || [])
+        .map((t) => ({ ...t, ids: t.ids.filter((id) => !selection.has(id)) }))
+        .filter((t) => t.ids.length);
+    });
     selection = new Set();
     touch();
     render();
@@ -1063,31 +1325,33 @@
     $('beatPlus').disabled = last;
     $('btnDelFrame').disabled = n <= 1;
 
-    for (const id of ['btnToolRoute', 'btnToolTurn', 'btnToolSelf', 'btnUndoWp', 'btnClearRoutes']) {
-      $(id).disabled = !inEdit;
-    }
+    $('btnToolRoute').disabled = !inEdit;
+    $('btnUndoWp').disabled = !inEdit;
+    $('btnTurnSelf').disabled = mode !== 'edit';
+    $('btnTurnGroup').disabled = mode !== 'edit';
+    $('btnClearRoutes').disabled = mode !== 'edit';
     $('btnToolRoute').classList.toggle('on', tool === 'ruta');
 
     $('bpm').value = c.bpm;
     $('offset').value = (c.offset || 0).toFixed(2);
     $('curved').checked = c.curved;
     $('snap').checked = c.snap;
+    $('btnZoomIn').disabled = zoomIdx >= ZOOMS.length - 1;
+    $('btnZoomOut').disabled = zoomIdx <= 0;
 
     renderTimeline();
+    renderTurnList();
     updateStatus();
   }
 
-  let audioBlob = null;
-
   // ---------- Detección automática de BPM y del primer tiempo ----------
-  // Busca el ritmo que mejor "calza" con los golpes de la música (pulso regular) y,
-  // con la misma cuenta, en qué segundo cae cada golpe del pulso.
+  // Busca el pulso que mejor "calza" con los golpes de la música y en qué segundo cae el primer tiempo.
   function analyzeBuffer(buf) {
     const sr = buf.sampleRate;
     const chans = [];
     for (let i = 0; i < buf.numberOfChannels; i++) chans.push(buf.getChannelData(i));
 
-    // 1) Mezcla a mono y baja la tasa a ~11 kHz (basta para encontrar golpes)
+    // 1) Mezcla a mono y baja la tasa a ~11 kHz
     const D = Math.max(1, Math.round(sr / 11025));
     const M = Math.floor(buf.length / D);
     const mono = new Float32Array(M);
@@ -1098,7 +1362,25 @@
       }
       mono[i] = s / (D * chans.length);
     }
-    // Nos quedamos con los graves (bombo y bajo): el hi-hat agudo confunde el pulso
+
+    // 2) Onda para la línea de tiempo (antes de filtrar)
+    const blk = Math.max(1, Math.round((sr / D) / PEAK_RATE));
+    const np = Math.floor(M / blk);
+    const pk = new Float32Array(np);
+    let pmax = 0;
+    for (let k = 0; k < np; k++) {
+      let mx = 0;
+      for (let j = k * blk; j < (k + 1) * blk; j++) {
+        const v = Math.abs(mono[j]);
+        if (v > mx) mx = v;
+      }
+      pk[k] = mx;
+      if (mx > pmax) pmax = mx;
+    }
+    if (pmax > 0) for (let k = 0; k < np; k++) pk[k] /= pmax;
+    const peaks = { data: pk, rate: (sr / D) / blk };
+
+    // 3) Nos quedamos con los graves (bombo y bajo): el hi-hat agudo confunde el pulso
     const alpha = 1 - Math.exp(-2 * Math.PI * 150 / (sr / D));
     let y = 0;
     for (let i = 0; i < M; i++) {
@@ -1106,7 +1388,7 @@
       mono[i] = y;
     }
 
-    // 2) Energía por cuadros de 128 muestras; un "golpe" es un aumento repentino
+    // 4) Energía por cuadros de 128 muestras; un "golpe" es un aumento de la amplitud
     const H = 128;
     const F = Math.floor(M / H);
     const fps = (sr / D) / H;
@@ -1125,7 +1407,7 @@
     mean /= Math.max(1, F - 1);
     for (let j = 0; j < F; j++) onset[j] -= mean;
 
-    // 3) Qué tan fuerte es un pulso a una velocidad dada (transformada en esa frecuencia)
+    // 5) Qué tan fuerte es un pulso a una velocidad dada
     const probe = (bpm) => {
       const w = 2 * Math.PI * (bpm / 60) / fps;
       const cw = Math.cos(w), sw = Math.sin(w);
@@ -1141,7 +1423,7 @@
       return { re, im, w, p: re * re + im * im };
     };
 
-    // 4) Busca entre 60 y 200 BPM: primero grueso, luego fino (0,01 BPM)
+    // 6) Busca entre 60 y 200 BPM: primero grueso, luego fino (0,01 BPM)
     const refine = (center) => {
       let r = { bpm: center, p: probe(center).p };
       for (let k = -50; k <= 50; k++) {
@@ -1157,7 +1439,7 @@
       if (p > coarse.p) coarse = { bpm: b, p };
     }
     let best = refine(coarse.bpm);
-    // Evita el error "al doble": si el tiempo a la mitad también tiene fuerza, ese es el ritmo
+    // Evita el error "al doble": si el tiempo a la mitad tiene la mitad de fuerza o más, ese es el ritmo
     for (;;) {
       if (best.bpm / 2 < 60) break;
       const half = refine(best.bpm / 2);
@@ -1165,15 +1447,15 @@
       best = half;
     }
 
-    // 5) Primer tiempo: la fase del pulso dentro de un tiempo
+    // 7) Primer tiempo: la fase del pulso dentro de un tiempo
     const bpm = Math.round(best.bpm * 100) / 100;
     const q = probe(bpm);
     const period = 60 / bpm;
-    const P = 2 * Math.PI / q.w;            // duración de un tiempo, en cuadros
+    const P = 2 * Math.PI / q.w;
     let i0 = -Math.atan2(q.im, q.re) / q.w;
     i0 = ((i0 % P) + P) % P;
     const offset = Math.round(((i0 / fps) % period) * 100) / 100;
-    return { bpm, offset };
+    return { bpm, offset, peaks };
   }
 
   async function detectTempo(file) {
@@ -1185,6 +1467,7 @@
       const res = analyzeBuffer(buf);
       c.bpm = res.bpm;
       c.offset = res.offset;
+      audioPeaks = res.peaks;
       c.updatedAt = Date.now();
       save();
       if (chor() === c) updateTransport();
@@ -1210,6 +1493,25 @@
     detectTempo(file).then(() => { $('audioName').textContent = file.name; });
   }
 
+  // ---------- Video de referencia ----------
+  function loadRef(file) {
+    if (!file) return;
+    if (refEl.src.startsWith('blob:')) URL.revokeObjectURL(refEl.src);
+    refEl.src = URL.createObjectURL(file);
+    refLoaded = true;
+    $('refName').textContent = file.name;
+    $('refFile').value = '';
+  }
+
+  function clearRef() {
+    refLoaded = false;
+    refEl.pause();
+    refEl.removeAttribute('src');
+    refEl.load();
+    $('refName').textContent = '';
+  }
+
+  // ---------- Exportar / compartir / importar ----------
   function ensureAudioGraph() {
     if (audioNode) return;
     const AC = window.AudioContext || window.webkitAudioContext;
@@ -1221,7 +1523,6 @@
     if (audioCtx.state === 'suspended') audioCtx.resume();
   }
 
-  // ---------- Exportar / compartir / importar ----------
   function exportPng() {
     const c = chor();
     render({ clean: true });
@@ -1238,7 +1539,30 @@
     if (!window.MediaRecorder) return toast('Tu navegador no puede grabar video');
     stopPlay();
 
-    const tracks = [...canvas.captureStream(30).getVideoTracks()];
+    // Con video de referencia: arriba el video de referencia, abajo el escenario
+    let out = canvas, cg = null;
+    if (refLoaded) {
+      const comp = document.createElement('canvas');
+      comp.width = canvas.width;
+      comp.height = canvas.height * 2;
+      cg = comp.getContext('2d');
+      out = comp;
+      refEl.currentTime = Math.max(0, parseFloat($('refStart').value) || 0);
+      refEl.play().catch(() => {});
+    }
+    const compose = () => {
+      const W = canvas.width, H = canvas.height;
+      cg.fillStyle = '#111';
+      cg.fillRect(0, 0, W, H * 2);
+      if (refEl.videoWidth) {
+        const s = Math.min(W / refEl.videoWidth, H / refEl.videoHeight);
+        const vw = refEl.videoWidth * s, vh = refEl.videoHeight * s;
+        cg.drawImage(refEl, (W - vw) / 2, (H - vh) / 2, vw, vh);
+      }
+      cg.drawImage(canvas, 0, H);
+    };
+
+    const tracks = [...out.captureStream(30).getVideoTracks()];
     if (audioLoaded) {
       try { ensureAudioGraph(); tracks.push(...audioOut.stream.getAudioTracks()); }
       catch (_) { /* seguimos sin audio */ }
@@ -1258,6 +1582,7 @@
       const mime = rec.mimeType || 'video/webm';
       download(new Blob(chunks, { type: mime }), `${safeName(c.name)}.${mime.includes('mp4') ? 'mp4' : 'webm'}`);
       exporting = false;
+      refEl.pause();
       mode = 'preview';
       playBeat = total;
       render();
@@ -1280,12 +1605,14 @@
       if (sec >= totalSec) {
         playBeat = total;
         render({ clean: true });
+        if (cg) compose();
         audioEl.pause();
         rec.stop();
         return;
       }
       playBeat = secToBeat(sec, c.bpm);
       render({ clean: true });
+      if (cg) compose();
       renderPlayhead();
       updateStatus();
       rafId = requestAnimationFrame(step);
@@ -1316,19 +1643,8 @@
       }
       data.id = uid();
       data.name = (data.name || 'Importada').slice(0, 40);
-      data.bpm = data.bpm || 120;
-      data.crews = data.crews || [];
-      data.offset = data.offset || 0;
       data.updatedAt = Date.now();
-      data.frames.forEach((fr) => {
-        fr.beats = fr.beats || 8;
-        fr.hold = fr.hold || 0;
-        fr.notes = fr.notes || '';
-        fr.name = fr.name || 'Formación';
-        fr.routes = fr.routes || {};
-        fr.spins = fr.spins || {};
-        fr.turns = fr.turns || {};
-      });
+      normChoreo(data);
       db.choreos.push(data);
       switchTo(data.id);
       toast('Coreografía importada');
@@ -1342,6 +1658,25 @@
     $('frameName').value = f.name;
     $('notesText').value = f.notes;
     $('dlgNotes').showModal();
+  }
+
+  function openNews() {
+    const list = $('newsList');
+    list.innerHTML = '';
+    for (const v of CHANGELOG) {
+      const box = el('div', 'news-item');
+      const h = el('strong');
+      h.textContent = v.fecha ? `${v.v} · ${v.fecha}` : v.v;
+      const ul = el('ul');
+      for (const it of v.items) {
+        const li = el('li');
+        li.textContent = it;
+        ul.appendChild(li);
+      }
+      box.append(h, ul);
+      list.appendChild(box);
+    }
+    $('dlgNews').showModal();
   }
 
   function setToolRuta() {
@@ -1378,6 +1713,8 @@
     $('btnPlay').onclick = () => (playing ? stopPlay() : play());
     $('btnPrev').onclick = () => setFrame(frameIdx - 1);
     $('btnNext').onclick = () => setFrame(frameIdx + 1);
+    $('btnZoomIn').onclick = () => setZoom(1);
+    $('btnZoomOut').onclick = () => setZoom(-1);
 
     document.querySelectorAll('.tab').forEach((b) => {
       b.onclick = () => showTab(b.dataset.go);
@@ -1393,7 +1730,7 @@
     $('btnDelFrame').onclick = delFrame;
     $('btnNotes').onclick = openNotes;
     $('frameName').oninput = (e) => {
-      chor().frames[frameIdx].name = e.target.value.slice(0, 30) || 'Formación';
+      chor().frames[frameIdx].name = e.target.value.slice(0, 30) || 'Escena';
       touch();
       updateTransport();
     };
@@ -1409,8 +1746,9 @@
     $('btnCrewClear').onclick = clearCrewFromSelection;
 
     $('btnToolRoute').onclick = setToolRuta;
-    $('btnToolTurn').onclick = spinSelection;
-    $('btnToolSelf').onclick = spinSelfSelection;
+    $('btnTurnSelf').onclick = () => openTurnDialog('self');
+    $('btnTurnGroup').onclick = () => openTurnDialog('group');
+    $('btnTurnOk').onclick = createTurn;
     $('btnUndoWp').onclick = undoWaypoint;
     $('btnClearRoutes').onclick = clearRoutes;
     $('curved').onchange = (e) => { chor().curved = e.target.checked; touch(); render(); };
@@ -1440,6 +1778,10 @@
       $('audioName').textContent = 'No se pudo cargar esa música';
     };
 
+    $('btnRefVideo').onclick = () => $('refFile').click();
+    $('refFile').onchange = (e) => loadRef(e.target.files[0]);
+    $('btnRefClear').onclick = clearRef;
+
     $('btnExportVideo').onclick = exportVideo;
     $('btnExportPng').onclick = exportPng;
     $('btnShare').onclick = shareChoreo;
@@ -1449,6 +1791,7 @@
     };
     $('btnImport').onclick = () => $('importFile').click();
     $('importFile').onchange = importChoreo;
+    $('btnNews').onclick = openNews;
 
     document.querySelectorAll('[data-close]').forEach((b) => {
       b.onclick = () => b.closest('dialog').close();
@@ -1456,6 +1799,8 @@
   }
 
   // ---------- Arranque ----------
+  $('verBadge').textContent = APP_VERSION;
+  $('verLabel').textContent = APP_VERSION;
   wireStage();
   wireTimeline();
   wireControls();
