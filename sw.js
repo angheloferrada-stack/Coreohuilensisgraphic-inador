@@ -1,5 +1,5 @@
-const CACHE = 'escenario-v1';
-const ASSETS = ['./', './index.html', './styles.css', './app.js', './manifest.json', './icon.svg'];
+const CACHE = 'escenario-v2';
+const ASSETS = ['./', './index.html', './styles.css', './app.js', './manifest.json', './icon.svg', './logo.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(

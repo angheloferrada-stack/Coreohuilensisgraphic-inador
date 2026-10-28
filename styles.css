@@ -1,11 +1,15 @@
 :root {
-  --bg: #0f0d14;
-  --panel: #181520;
-  --line: #2c2838;
-  --txt: #f2eff7;
-  --muted: #9a93ab;
-  --acc: #c77dff;
-  --acc2: #4ecdc4;
+  --bg: #f7f7f7;
+  --card: #ffffff;
+  --ink: #111111;
+  --ink-soft: #5b5b63;
+  --muted: #8a8a93;
+  --line: #e6e6ea;
+  --dark: #1c1c1e;
+  --teal: #1fb5b0;
+  --purple: #9b5de5;
+  --grad: linear-gradient(90deg, var(--teal), var(--purple));
+  --radius: 14px;
 }
 
 * { box-sizing: border-box; }
@@ -14,8 +18,8 @@ html, body {
   height: 100%;
   margin: 0;
   background: var(--bg);
-  color: var(--txt);
-  font: 14px/1.35 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color: var(--ink);
+  font: 14px/1.4 "DM Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   overflow: hidden;
 }
 
@@ -25,24 +29,68 @@ body {
   height: 100dvh;
 }
 
+/* ----- Cabecera ----- */
 header.top {
+  position: relative;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 12px;
+  padding-top: calc(8px + env(safe-area-inset-top));
+  background: var(--card);
+}
+
+header.top::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  background: var(--grad);
+}
+
+.logo {
+  width: 42px;
+  height: 42px;
+  object-fit: contain;
+  flex: none;
+}
+
+.brand {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.1;
+  min-width: 0;
+}
+
+.brand strong {
+  font: 400 20px "DM Serif Display", Georgia, serif;
+  color: var(--ink);
+}
+
+.brand span {
+  font-size: 11px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.top-actions {
+  margin-left: auto;
   display: flex;
   gap: 6px;
   align-items: center;
-  padding: 8px;
-  padding-top: calc(8px + env(safe-area-inset-top));
-  background: var(--panel);
-  border-bottom: 1px solid var(--line);
+  min-width: 0;
 }
 
 header.top select {
-  flex: 1;
-  min-width: 0;
+  max-width: 150px;
   background: var(--bg);
-  color: var(--txt);
+  color: var(--ink);
   border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 8px;
+  border-radius: 999px;
+  padding: 7px 12px;
   font: inherit;
 }
 
@@ -55,7 +103,7 @@ main {
 
 .stage-wrap {
   flex: 1;
-  min-height: 200px;
+  min-height: 180px;
   position: relative;
 }
 
@@ -68,16 +116,25 @@ main {
   touch-action: none;
 }
 
+/* ----- Panel inferior ----- */
 .bar {
-  background: var(--panel);
+  background: var(--card);
   border-top: 1px solid var(--line);
-  padding: 8px;
-  padding-bottom: calc(8px + env(safe-area-inset-bottom));
+  padding: 10px 12px;
+  padding-bottom: calc(10px + env(safe-area-inset-bottom));
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-height: 45dvh;
+  max-height: 52dvh;
   overflow: auto;
+}
+
+.eyebrow {
+  margin: 6px 0 0;
+  font-size: 11px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--muted);
 }
 
 .row {
@@ -93,38 +150,169 @@ main {
   align-items: center;
 }
 
-.transport input[type=range] {
-  flex: 1;
+.status {
+  color: var(--ink-soft);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   min-width: 0;
 }
 
-button {
+/* ----- Línea de tiempo ----- */
+.timeline {
+  position: relative;
+  overflow-x: auto;
+  overflow-y: hidden;
+  height: 104px;
+  flex: none;
   background: var(--bg);
-  color: var(--txt);
   border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 8px 10px;
+  border-radius: var(--radius);
+  touch-action: pan-x;
+}
+
+.tl-track {
+  position: relative;
+  height: 100%;
+}
+
+.tl-ruler {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 24px;
+  background: #efeff3;
+  border-bottom: 1px solid var(--line);
+  touch-action: none;
+  cursor: pointer;
+}
+
+.tl-tick {
+  position: absolute;
+  top: 0;
+  height: 24px;
+  line-height: 24px;
+  padding-left: 4px;
+  border-left: 1px solid rgba(0, 0, 0, .12);
+  color: var(--muted);
+  font-size: 10px;
+  pointer-events: none;
+}
+
+.tl-block {
+  position: absolute;
+  top: 32px;
+  height: 60px;
+  border-radius: 10px;
+  padding: 5px 8px;
+  background: var(--grad);
+  color: #fff;
+  cursor: pointer;
+  overflow: visible;
+}
+
+.tl-block.end {
+  background: var(--dark);
+}
+
+.tl-block.on {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+.tl-label {
+  display: block;
+  font-weight: 700;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tl-sub {
+  display: block;
+  font-size: 10px;
+  opacity: .9;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tl-handle {
+  position: absolute;
+  top: 0;
+  right: -8px;
+  width: 16px;
+  height: 100%;
+  cursor: ew-resize;
+  touch-action: none;
+  z-index: 3;
+}
+
+.tl-handle::after {
+  content: "";
+  position: absolute;
+  left: 6px;
+  top: 14px;
+  bottom: 14px;
+  width: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, .9);
+}
+
+.tl-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--ink);
+  pointer-events: none;
+  z-index: 4;
+}
+
+/* ----- Botones y campos ----- */
+button {
+  background: var(--card);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 8px 14px;
   font: inherit;
+  font-weight: 500;
   cursor: pointer;
   min-height: 36px;
 }
 
+button.pill {
+  padding: 6px 12px;
+  min-height: 34px;
+  background: var(--bg);
+}
+
 button.primary {
-  background: var(--acc);
-  border-color: var(--acc);
-  color: #111;
+  background: var(--dark);
+  border-color: var(--dark);
+  color: #fff;
   font-weight: 700;
+}
+
+button.on {
+  background: var(--teal);
+  border-color: var(--teal);
+  color: #fff;
 }
 
 button:disabled { opacity: .4; cursor: default; }
 
 input[type=number] {
-  width: 72px;
-  background: var(--bg);
-  color: var(--txt);
+  width: 76px;
+  background: var(--card);
+  color: var(--ink);
   border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 6px;
+  border-radius: 10px;
+  padding: 6px 8px;
   font: inherit;
 }
 
@@ -132,63 +320,44 @@ label {
   display: flex;
   gap: 6px;
   align-items: center;
-  color: var(--muted);
-}
-
-.chips {
-  display: flex;
-  gap: 6px;
-  overflow-x: auto;
-  padding-bottom: 4px;
-}
-
-.chip {
-  white-space: nowrap;
-  border-radius: 999px;
-}
-
-.chip.on {
-  background: var(--acc2);
-  color: #081513;
-  border-color: var(--acc2);
-  font-weight: 700;
-}
-
-.status {
-  color: var(--muted);
-  font-size: 12px;
-  white-space: nowrap;
+  color: var(--ink-soft);
+  font-size: 13px;
 }
 
 .muted { color: var(--muted); }
 
 .dot::after {
   content: "•";
-  color: var(--acc2);
+  color: var(--purple);
   margin-left: 4px;
 }
 
+/* ----- Diálogos ----- */
 dialog {
-  background: var(--panel);
-  color: var(--txt);
+  background: var(--card);
+  color: var(--ink);
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: 18px;
   width: min(94vw, 460px);
-  padding: 16px;
+  padding: 18px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, .15);
 }
 
-dialog::backdrop { background: rgba(0, 0, 0, .6); }
+dialog::backdrop { background: rgba(20, 20, 24, .35); }
 
-dialog h3 { margin: 0 0 10px; }
+dialog h3 {
+  margin: 0 0 12px;
+  font: 400 22px "DM Serif Display", Georgia, serif;
+}
 
 dialog input[type=text],
 dialog textarea {
   width: 100%;
   background: var(--bg);
-  color: var(--txt);
+  color: var(--ink);
   border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 8px;
+  border-radius: 10px;
+  padding: 8px 10px;
   font: inherit;
   margin-bottom: 8px;
 }
@@ -197,7 +366,7 @@ dialog textarea {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 0;
+  padding: 8px 0;
   border-bottom: 1px solid var(--line);
 }
 
@@ -214,10 +383,10 @@ dialog textarea {
   left: 50%;
   bottom: 24px;
   transform: translateX(-50%) translateY(20px);
-  background: #fff;
-  color: #111;
-  padding: 10px 14px;
-  border-radius: 10px;
+  background: var(--dark);
+  color: #fff;
+  padding: 10px 16px;
+  border-radius: 999px;
   opacity: 0;
   transition: opacity .25s, transform .25s;
   pointer-events: none;
