@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#F7F7F7">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Escenario">
+  <title>Escenario · Huilén (PC)</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="logo.png" type="image/png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="pc.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand-row">
+      <img src="logo.png" alt="Huilén" class="logo">
+      <div class="brand"><strong>Escenario</strong><span>Formaciones</span></div>
+    </div>
+    <div class="top-actions">
+      <select id="choreoSelect" aria-label="Coreografía"></select>
+      <button id="btnNewChoreo" class="pill" title="Crear una coreografía nueva">+ Nueva</button>
+      <a class="pill-link" href="index.html">Versión celular</a>
+    </div>
+  </header>
+
+  <main>
+    <div class="stage-wrap">
+      <canvas id="stage"></canvas>
+    </div>
+
+    <div class="playbar">
+      <button id="btnPrev" class="round" aria-label="Formación anterior">⏮</button>
+      <button id="btnPlay" class="round play" aria-label="Reproducir">▶</button>
+      <button id="btnNext" class="round" aria-label="Formación siguiente">⏭</button>
+      <span id="status" class="status"></span>
+    </div>
+
+    <div id="timeline" class="timeline" aria-label="Línea de tiempo"></div>
+    <div class="legend">
+      <span><i class="sw hold"></i>Quieta: se quedan quietos</span>
+      <span><i class="sw move"></i>Mover: caminan a la siguiente</span>
+    </div>
+
+    <div class="panel">
+      <!-- Lista 1: formación actual -->
+      <section class="tab-panel" data-tab="formacion">
+        <h2 class="cat">Formación</h2>
+        <div class="card">
+          <h4>Esta formación</h4>
+          <p class="help">Cada formación tiene dos partes. Toca − o + para cambiar los tiempos.</p>
+          <div class="stepper">
+            <div class="step-text"><b>Quieta</b><small>tiempos en que se quedan</small></div>
+            <div class="step-ctl">
+              <button id="holdMinus" class="round sm" aria-label="Menos quieta">−</button>
+              <span id="holdVal" class="step-val">0</span>
+              <button id="holdPlus" class="round sm" aria-label="Más quieta">+</button>
+            </div>
+          </div>
+          <div class="stepper">
+            <div class="step-text"><b>Mover</b><small>tiempos para llegar a la siguiente</small></div>
+            <div class="step-ctl">
+              <button id="beatMinus" class="round sm" aria-label="Menos mover">−</button>
+              <span id="beatVal" class="step-val">8</span>
+              <button id="beatPlus" class="round sm" aria-label="Más mover">+</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h4>Formaciones</h4>
+          <p class="help">Una nueva formación aparece después de la que estás viendo.</p>
+          <div class="grid2">
+            <button id="btnAddFrame" class="btn">+ Nueva formación</button>
+            <button id="btnDupFrame" class="btn">Duplicar</button>
+            <button id="btnNotes" class="btn">Nombre y notas</button>
+            <button id="btnDelFrame" class="btn danger">Borrar</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Lista 2: bailarines -->
+      <section class="tab-panel" data-tab="bailarines">
+        <h2 class="cat">Bailarines</h2>
+        <div class="card">
+          <h4>Bailarines</h4>
+          <p class="help">Toca un bailarín para seleccionarlo. Arrastra sobre el escenario para elegir varios. Doble toque para cambiarle el nombre.</p>
+          <div class="grid2">
+            <button id="btnAddDancer" class="btn">+ Agregar</button>
+            <button id="btnRemoveDancer" class="btn danger">Quitar seleccionados</button>
+          </div>
+        </div>
+        <div class="card">
+          <h4>Crews</h4>
+          <p class="help">Un crew es un grupo de bailarines con su propio color.</p>
+          <button id="btnCrews" class="btn wide">Ver crews</button>
+        </div>
+      </section>
+
+      <!-- Lista 3: movimientos -->
+      <section class="tab-panel" data-tab="movimiento">
+        <h2 class="cat">Movimiento</h2>
+        <div class="card">
+          <h4>Movimientos</h4>
+          <p class="help">Primero selecciona bailarines en el escenario. Después elige un movimiento para la transición de esta formación.</p>
+          <div class="option-list">
+            <button id="btnToolRoute" class="option">
+              <b>Ruta</b>
+              <small>toca el escenario para poner puntos de paso</small>
+            </button>
+            <button id="btnToolTurn" class="option">
+              <b>Vuelta en grupo</b>
+              <small>el grupo gira mientras se mueve</small>
+            </button>
+            <button id="btnToolSelf" class="option">
+              <b>Vuelta propia</b>
+              <small>cada bailarín gira sobre sí mismo</small>
+            </button>
+          </div>
+          <div class="grid2">
+            <button id="btnUndoWp" class="btn">Deshacer último punto</button>
+            <button id="btnClearRoutes" class="btn danger">Quitar movimientos</button>
+          </div>
+        </div>
+        <div class="card">
+          <h4>Dibujo</h4>
+          <label class="check"><input id="curved" type="checkbox"> Trayectorias curvas</label>
+          <label class="check"><input id="snap" type="checkbox" checked> Ajustar a la grilla</label>
+        </div>
+      </section>
+
+      <!-- Lista 4: más -->
+      <section class="tab-panel" data-tab="mas">
+        <h2 class="cat">Más</h2>
+        <div class="card">
+          <h4>Música</h4>
+          <p class="help">Al elegir una canción, la app detecta sola su ritmo y en qué segundo cae el primer tiempo. Si quedó al doble o a la mitad, usa ÷2 o ×2.</p>
+          <div class="row">
+            <button id="btnMusic" class="btn">Elegir música</button>
+            <span id="audioName" class="muted"></span>
+            <input id="audioFile" type="file" accept="audio/*" hidden>
+          </div>
+          <div class="stepper">
+            <div class="step-text"><b>BPM</b><small>tiempos por minuto</small></div>
+            <div class="step-ctl">
+              <button id="btnHalf" class="pill" title="Dividir a la mitad">÷2</button>
+              <input id="bpm" type="number" min="30" max="300" step="0.01" value="120">
+              <button id="btnDouble" class="pill" title="Multiplicar por dos">×2</button>
+            </div>
+          </div>
+          <div class="stepper">
+            <div class="step-text"><b>Primer tiempo</b><small>segundo de la música donde parte el tiempo 1</small></div>
+            <input id="offset" type="number" min="0" step="0.01" value="0">
+          </div>
+          <button id="btnDetect" class="btn wide">Detectar otra vez</button>
+        </div>
+        <div class="card">
+          <h4>Exportar y compartir</h4>
+          <div class="grid2">
+            <button id="btnExportVideo" class="btn">Video</button>
+            <button id="btnExportPng" class="btn">Imagen (PNG)</button>
+            <button id="btnShare" class="btn">Compartir</button>
+            <button id="btnExportJson" class="btn">Guardar (JSON)</button>
+          </div>
+          <button id="btnImport" class="btn wide">Importar coreografía</button>
+          <input id="importFile" type="file" accept="application/json,.json" hidden>
+        </div>
+        <div class="card">
+          <h4>Coreografía</h4>
+          <div class="grid2">
+            <button id="btnRenameChoreo" class="btn">Renombrar</button>
+            <button id="btnDeleteChoreo" class="btn danger">Eliminar</button>
+          </div>
+          <a class="btn" href="index.html">Abrir versión para celular</a>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <dialog id="dlgNotes">
+    <h3>Formación</h3>
+    <input id="frameName" type="text" maxlength="30" placeholder="Nombre de la formación">
+    <textarea id="notesText" rows="6" placeholder="Notas para los bailarines…"></textarea>
+    <div class="row"><button data-close class="btn dark">Listo</button></div>
+  </dialog>
+
+  <dialog id="dlgCrews">
+    <h3>Crews</h3>
+    <div id="crewList"></div>
+    <div class="row">
+      <button id="btnCrewFromSel" class="btn">Crear con seleccionados</button>
+      <button id="btnCrewClear" class="btn">Quitar de crew</button>
+      <button data-close class="btn dark">Cerrar</button>
+    </div>
+  </dialog>
+
+  <div id="toast" class="toast" role="status"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

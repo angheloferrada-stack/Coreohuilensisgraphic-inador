@@ -513,6 +513,21 @@ button.option.on small { color: #e9fffe; }
   font-weight: 700;
 }
 
+.cat { display: none; }
+
+a.btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--ink);
+  text-decoration: none;
+  font-weight: 500;
+}
+
 button.pill {
   min-height: 36px;
   padding: 7px 12px;

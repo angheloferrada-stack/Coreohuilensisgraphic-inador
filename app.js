@@ -59,7 +59,7 @@
   // ---------- Datos y almacenamiento ----------
   // Cada formación: "hold" = tiempos quieta, "beats" = tiempos para moverse a la siguiente
   function newFrame(name, pos, hold = 0, beats = 8) {
-    return { id: uid(), name, notes: '', hold, beats, pos, routes: {}, spins: {} };
+    return { id: uid(), name, notes: '', hold, beats, pos, routes: {}, spins: {}, turns: {} };
   }
 
   function newChoreo(name) {
@@ -274,7 +274,7 @@
     render();
   }
 
-  function drawScene(pos, opts) {
+  function drawScene(pos, opts, turns) {
     const c = chor();
     const edit = mode === 'edit' && !opts.clean;
     const { dpr, w, h, sx, sy, sw, sh } = view;
@@ -394,6 +394,29 @@
       ctx.lineWidth = isSel ? 3 : 1.5;
       ctx.strokeStyle = isSel ? '#111111' : 'rgba(0,0,0,0.25)';
       ctx.stroke();
+      // Vuelta propia: en edición se ve el arco que va a girar; al reproducir, una marca que gira
+      const turn = turns[d.id];
+      if (turn !== undefined) {
+        if (edit) {
+          ctx.setLineDash([4, 4]);
+          ctx.strokeStyle = dancerColor(d);
+          ctx.lineWidth = 2.5;
+          ctx.beginPath();
+          const a0 = -Math.PI / 2;
+          ctx.arc(q.x, q.y, rad * 1.45, a0, a0 + turn * Math.PI / 180, turn < 0);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        } else {
+          const a = -Math.PI / 2 + turn * Math.PI / 180;
+          ctx.strokeStyle = 'rgba(17,17,17,0.85)';
+          ctx.lineWidth = 3;
+          ctx.lineCap = 'round';
+          ctx.beginPath();
+          ctx.moveTo(q.x + Math.cos(a) * rad * 0.3, q.y + Math.sin(a) * rad * 0.3);
+          ctx.lineTo(q.x + Math.cos(a) * rad * 0.95, q.y + Math.sin(a) * rad * 0.95);
+          ctx.stroke();
+        }
+      }
       ctx.fillStyle = '#111';
       ctx.font = `700 ${Math.round(rad * 0.85)}px "DM Sans", system-ui`;
       ctx.textAlign = 'center';
@@ -416,8 +439,12 @@
   function render(opts = {}) {
     if (!view.w) return;
     const c = chor();
-    const pos = mode === 'edit' ? c.frames[frameIdx].pos : positionsAt(c, playBeat);
-    drawScene(pos, opts);
+    const edit = mode === 'edit';
+    const pos = edit ? c.frames[frameIdx].pos : positionsAt(c, playBeat);
+    const turns = edit
+      ? (frameIdx < c.frames.length - 1 ? (c.frames[frameIdx].turns || {}) : {})
+      : selfAngles(c, playBeat);
+    drawScene(pos, opts, turns);
   }
 
   // ---------- Interacción con el escenario ----------
@@ -492,6 +519,31 @@
     updateStatus();
   }
 
+  // Vuelta propia: cada bailarín gira sobre sí mismo mientras se mueve (no cambia su camino)
+  function spinSelfSelection() {
+    if (!guardMovement()) return;
+    const c = chor(), f = c.frames[frameIdx];
+    const ids = [...selection].filter((id) => f.pos[id]);
+    if (!ids.length) return toast('Selecciona bailarines primero');
+    const deg = parseFloat(prompt('Grados que gira cada bailarín sobre sí mismo (360 = una vuelta)', '360'));
+    if (!deg) return;
+    f.turns = f.turns || {};
+    for (const id of ids) f.turns[id] = deg;
+    touch();
+    render();
+    updateStatus();
+  }
+
+  // Ángulo de la vuelta propia de cada bailarín en el tiempo b (durante el movimiento)
+  function selfAngles(c, b) {
+    const s = segmentsOf(c).find((x) => x.kind === 'move' && b >= x.start && b < x.start + x.dur);
+    if (!s) return {};
+    const p = ease(clamp01((b - s.start) / s.dur));
+    const out = {};
+    for (const [id, deg] of Object.entries(c.frames[s.from].turns || {})) out[id] = deg * p;
+    return out;
+  }
+
   function undoWaypoint() {
     const f = chor().frames[frameIdx];
     let n = 0;
@@ -514,6 +566,7 @@
     let n = 0;
     for (const id of selection) {
       if (f.routes && f.routes[id]) { delete f.routes[id]; n++; }
+      if (f.turns && f.turns[id]) { delete f.turns[id]; n++; }
       const sp = f.spins && f.spins[id];
       if (sp) {
         for (const other of sp.ids) delete f.spins[other];
@@ -877,6 +930,7 @@
       delete f.pos[id];
       if (f.routes) delete f.routes[id];
       if (f.spins) delete f.spins[id];
+      if (f.turns) delete f.turns[id];
     }));
     selection = new Set();
     touch();
@@ -1009,7 +1063,7 @@
     $('beatPlus').disabled = last;
     $('btnDelFrame').disabled = n <= 1;
 
-    for (const id of ['btnToolRoute', 'btnToolTurn', 'btnUndoWp', 'btnClearRoutes']) {
+    for (const id of ['btnToolRoute', 'btnToolTurn', 'btnToolSelf', 'btnUndoWp', 'btnClearRoutes']) {
       $(id).disabled = !inEdit;
     }
     $('btnToolRoute').classList.toggle('on', tool === 'ruta');
@@ -1273,6 +1327,7 @@
         fr.name = fr.name || 'Formación';
         fr.routes = fr.routes || {};
         fr.spins = fr.spins || {};
+        fr.turns = fr.turns || {};
       });
       db.choreos.push(data);
       switchTo(data.id);
@@ -1355,6 +1410,7 @@
 
     $('btnToolRoute').onclick = setToolRuta;
     $('btnToolTurn').onclick = spinSelection;
+    $('btnToolSelf').onclick = spinSelfSelection;
     $('btnUndoWp').onclick = undoWaypoint;
     $('btnClearRoutes').onclick = clearRoutes;
     $('curved').onchange = (e) => { chor().curved = e.target.checked; touch(); render(); };
